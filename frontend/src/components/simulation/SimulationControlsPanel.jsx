@@ -1,9 +1,7 @@
 import React from "react";
-import { Play, Pause, RotateCcw, FastForward, Zap, Users, CloudRain, AlertTriangle, ChevronRight } from "lucide-react";
+import { Play, Pause, RotateCcw, Zap, ChevronRight } from "lucide-react";
 
 export default function SimulationControlsPanel({
-  mode, // "LIVE" | "SIMULATION"
-  onToggleMode,
   isPlaying,
   speedMultiplier = 1,
   activeScenario = 1,
@@ -13,47 +11,50 @@ export default function SimulationControlsPanel({
   onStep,
   onSetSpeed,
   onLoadScenario,
-  onRiderAction
+  onRiderAction,
+  conditions
 }) {
   return (
     <div className="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-800 p-4 shadow-xl space-y-3">
-      {/* Mode Toggle Header: LIVE MODE vs SIMULATION MODE */}
+      {/* Simulation mode is the only available mode. */}
       <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
         <div className="flex items-center gap-1.5">
           <Zap className="w-4 h-4 text-amber-400" />
           <h4 className="font-bold text-xs uppercase tracking-wider text-slate-200">
-            Control Mode
+            Simulation
           </h4>
         </div>
-
-        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-          <button
-            onClick={() => onToggleMode("LIVE")}
-            className={`px-2.5 py-1 text-xs font-bold rounded-lg transition ${
-              mode === "LIVE"
-                ? "bg-emerald-600 text-white shadow"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            LIVE GPS
-          </button>
-          <button
-            onClick={() => onToggleMode("SIMULATION")}
-            className={`px-2.5 py-1 text-xs font-bold rounded-lg transition ${
-              mode === "SIMULATION"
-                ? "bg-amber-600 text-white shadow"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            SIMULATION
-          </button>
-        </div>
+        <span className="rounded-md border border-amber-800/70 bg-amber-950/50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+          Simulation mode
+        </span>
       </div>
 
-      {mode === "SIMULATION" ? (
-        <div className="space-y-3">
-          {/* Play, Pause, Reset, Step & Speed Multipliers */}
-          <div className="flex items-center justify-between gap-1.5 bg-slate-950/80 p-2 rounded-xl border border-slate-800">
+      <div className="space-y-3">
+          <div className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+            Simulation only · these riders and incidents are sample data.
+          </div>
+
+          {conditions && (
+            <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-200">Scenario conditions</span>
+                {conditions.risk && <span className="text-xs font-medium text-amber-300">Risk {conditions.risk.score}/100 · {conditions.risk.level}</span>}
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-md bg-slate-900 px-2 py-2"><div className="text-[10px] text-slate-500">Rain</div><div className="mt-0.5 text-sm font-semibold text-slate-100">{conditions.rainfall ?? "—"}<span className="ml-1 text-[10px] font-normal text-slate-400">mm/h</span></div></div>
+                <div className="rounded-md bg-slate-900 px-2 py-2"><div className="text-[10px] text-slate-500">Traffic</div><div className="mt-0.5 text-sm font-semibold text-slate-100">{conditions.traffic ?? "—"}<span className="ml-1 text-[10px] font-normal text-slate-400">%</span></div></div>
+                <div className="rounded-md bg-slate-900 px-2 py-2"><div className="text-[10px] text-slate-500">Incidents</div><div className="mt-0.5 text-sm font-semibold text-slate-100">{(conditions.hazards?.length || 0) + (conditions.events?.length || 0)}</div></div>
+              </div>
+              {[...(conditions.hazards || []), ...(conditions.events || [])].length > 0 && (
+                <ul className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-[11px] text-slate-300">
+                  {[...(conditions.hazards || []), ...(conditions.events || [])].map((item) => <li key={item.id}>{item.name}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Play, Pause, Reset, Step */}
+          <div className="flex items-center justify-center gap-1.5 bg-slate-950/80 p-2 rounded-xl border border-slate-800">
             <div className="flex items-center gap-1">
               {isPlaying ? (
                 <button
@@ -89,43 +90,26 @@ export default function SimulationControlsPanel({
                 <RotateCcw className="w-4 h-4" />
               </button>
             </div>
-
-            {/* Speed Multipliers */}
-            <div className="flex items-center gap-1">
-              {[1, 2, 5, 10].map((mult) => (
-                <button
-                  key={mult}
-                  onClick={() => onSetSpeed(mult)}
-                  className={`px-2 py-1 text-[11px] font-mono font-bold rounded-lg transition ${
-                    speedMultiplier === mult
-                      ? "bg-cyan-600 text-white"
-                      : "bg-slate-800/80 text-slate-400 hover:text-white"
-                  }`}
-                >
-                  {mult}x
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Predefined Scenarios 1 to 8 Dropdown / Selector */}
           <div>
             <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
-              Select Demo Scenario (1–8)
+              Choose a scenario
             </label>
             <select
               value={activeScenario}
               onChange={(e) => onLoadScenario(parseInt(e.target.value, 10))}
               className="w-full bg-slate-950 border border-slate-800 text-xs text-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
             >
-              <option value={1}>Scenario 1: Normal Group Ride (Cohesive)</option>
-              <option value={2}>Scenario 2: Rider Falls Behind (Akash Lags)</option>
-              <option value={3}>Scenario 3: Rider Goes Off Route (Rahul Diverges)</option>
-              <option value={4}>Scenario 4: Rider Approaching (Proximity Alerts)</option>
-              <option value={5}>Scenario 5: Heavy Rain (Severe Waterlogging)</option>
-              <option value={6}>Scenario 6: Flooded Road (Hosur Underpass Submerged)</option>
-              <option value={7}>Scenario 7: Large Public Event (Festival Congestion)</option>
-              <option value={8}>Scenario 8: MAIN DEMO (Rain + Event + Off-Route + Separation)</option>
+              <option value={1}>Normal group ride</option>
+              <option value={2}>Rider falls behind</option>
+              <option value={3}>Rider leaves the route</option>
+              <option value={4}>Rider catches up</option>
+              <option value={5}>Heavy rain and waterlogging</option>
+              <option value={6}>Road closure and safer route</option>
+              <option value={7}>Public gathering and congestion</option>
+              <option value={8}>Combined disruption</option>
             </select>
           </div>
 
@@ -155,18 +139,7 @@ export default function SimulationControlsPanel({
               </button>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="p-3 bg-slate-950/70 rounded-xl border border-slate-800/80 text-xs text-slate-300 space-y-1">
-          <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            Real GPS Device Tracking Active
-          </div>
-          <p className="text-[11px] text-slate-400">
-            Broadcasting actual device geolocation at 1 update per 3s to connected ride room.
-          </p>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

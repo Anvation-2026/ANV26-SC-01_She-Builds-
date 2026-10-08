@@ -5,7 +5,7 @@
 
 export const DEFAULT_TILE_URL =
   import.meta.env.VITE_MAP_TILE_URL ||
-  "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png";
+  "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 
 export const MAP_PROVIDERS = {
   carto_dark: {
@@ -17,7 +17,7 @@ export const MAP_PROVIDERS = {
   osm_standard: {
     id: "osm_standard",
     name: "OpenStreetMap Standard",
-    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    url: DEFAULT_TILE_URL,
     attribution: "© OpenStreetMap contributors"
   },
   osm_humanitarian: {

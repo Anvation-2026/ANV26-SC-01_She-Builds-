@@ -1,8 +1,10 @@
 import express from "express";
 import { db } from "../database/spatialStore.js";
 import { CommunityReport, Hazard } from "../database/models.js";
+import { requireAuth } from "../auth/requireAuth.js";
 
 const router = express.Router();
+router.use(requireAuth);
 
 // GET /api/reports
 router.get("/", (req, res) => {
@@ -19,7 +21,6 @@ router.post("/", (req, res) => {
     description,
     latitude,
     longitude,
-    userId = "rider-app",
     gpsAccuracy = 8,
     photoEvidence = false
   } = req.body;
@@ -27,9 +28,15 @@ router.post("/", (req, res) => {
   if (!type || !description) {
     return res.status(400).json({ error: "Type and description are required" });
   }
-
-  const lat = latitude !== undefined ? parseFloat(latitude) : 12.9560;
-  const lng = longitude !== undefined ? parseFloat(longitude) : 77.6010;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+    return res.status(400).json({ success: false, error: "A valid GPS location is required to report an incident." });
+  }
+  const accuracy = Number(gpsAccuracy);
+  if (!Number.isFinite(accuracy) || accuracy < 0) {
+    return res.status(400).json({ success: false, error: "GPS accuracy must be a non-negative number." });
+  }
 
   // Multi-factor trust score computation:
   // Base = 50
@@ -38,7 +45,7 @@ router.post("/", (req, res) => {
   // + 10 if detailed description (> 15 chars)
   // + 10 if nearby reports corroborate within 500m
   let trustScore = 50;
-  if (gpsAccuracy <= 10) trustScore += 15;
+  if (accuracy <= 10) trustScore += 15;
   if (photoEvidence) trustScore += 15;
   if (description.length > 15) trustScore += 10;
 
@@ -48,22 +55,23 @@ router.post("/", (req, res) => {
 
   const newReport = new CommunityReport({
     id: `REP-${Date.now().toString().slice(-4)}`,
-    userId,
+    userId: req.user.sub,
     type,
     latitude: lat,
     longitude: lng,
     description,
     severity: type === "ROAD_BLOCKED" || type === "EMERGENCY" ? 95 : 80,
     trustScore,
-    gpsAccuracy,
+    gpsAccuracy: accuracy,
     photoEvidence
   });
 
   db.reports.unshift(newReport);
 
   // If high confidence report, activate or register new hazard
-  if (type === "FLOODING" || type === "ROAD_BLOCKED" || type === "WATERLOGGING") {
-    const hazard = new Hazard({
+  let reportedHazard = null;
+  if (["FLOODING", "ROAD_BLOCKED", "WATERLOGGING", "ACCIDENT", "EMERGENCY"].includes(type)) {
+    reportedHazard = new Hazard({
       id: `HZ-${newReport.id}`,
       name: `Citizen Report: ${type.replace("_", " ")}`,
       type,
@@ -77,8 +85,10 @@ router.post("/", (req, res) => {
       active: true,
       description
     });
-    db.hazards.push(hazard);
+    db.hazards.push(reportedHazard);
   }
+
+  req.app.get("io")?.emit("incident:reported", { report: newReport, hazard: reportedHazard });
 
   res.status(201).json({
     success: true,

@@ -3,38 +3,9 @@
  */
 
 import { queryOSRMRoute } from "./osrmClient.js";
+import { queryTomTomRoutes } from "./tomtomRoutingClient.js";
 import { calculateDistance } from "../geo/haversine.js";
 import { db } from "../database/spatialStore.js";
-
-// Corridor detour waypoints in Bengaluru
-const CORRIDOR_BYPASS_WAYPOINTS = {
-  koramangala: {
-    safest: [77.6360, 12.9610],   // Inner Ring Road Elevated Bypass
-    balanced: [77.5850, 12.9550]  // Lalbagh West Arterial
-  },
-  indiranagar: {
-    safest: [77.6350, 12.9620],   // Domlur / Old Airport Road Elevated Corridor
-    balanced: [77.6250, 12.9900]  // Ulsoor North / Kensington
-  },
-  electronic_city: {
-    safest: [77.6020, 12.8900],   // Bannerghatta / NICE Road Link
-    balanced: [77.6450, 12.8750]  // Harlur / Singasandra bypass
-  },
-  whitefield: {
-    safest: [77.7050, 12.9950],   // KR Puram Cable Bridge / Old Madras Rd Bypass
-    balanced: [77.6800, 12.9700]  // HAL / Varthur link
-  }
-};
-
-export function detectCorridor(destination) {
-  const [lng, lat] = Array.isArray(destination)
-    ? destination
-    : [destination.lng, destination.lat];
-  if (lat < 12.90) return "electronic_city";
-  if (lng > 77.70) return "whitefield";
-  if (lng > 77.63 && lat > 12.965) return "indiranagar";
-  return "koramangala";
-}
 
 /**
  * Checks if a route line intersects any active hazards
@@ -79,144 +50,100 @@ export async function calculateDisasterAwareRoute({
   origin,
   destination,
   waypoints = [],
-  emergencyCorridor = false
+  emergencyCorridor = false,
+  simulatedHazards = []
 }) {
   const startCoord = Array.isArray(origin) ? origin : [origin.lng, origin.lat];
   const endCoord = Array.isArray(destination) ? destination : [destination.lng, destination.lat];
   const midWaypoints = waypoints.map(w => Array.isArray(w) ? w : [w.lng, w.lat]);
-
-  const corridor = detectCorridor(endCoord);
-  const bypasses = CORRIDOR_BYPASS_WAYPOINTS[corridor] || CORRIDOR_BYPASS_WAYPOINTS.koramangala;
-
-  // 1. Fetch direct/primary route via OSRM
   const primaryWaypoints = [startCoord, ...midWaypoints, endCoord];
-  const osrmRoutes = await queryOSRMRoute(primaryWaypoints, { alternatives: true, steps: true });
+  const tomTomRoutes = await queryTomTomRoutes(primaryWaypoints);
+  const routeProvider = tomTomRoutes ? "TOMTOM" : "OSRM";
+  const rawRoutes = tomTomRoutes || await queryOSRMRoute(primaryWaypoints, { alternatives: true, steps: false });
+  if (!rawRoutes?.length) throw new Error("No routing provider returned a route");
 
-  let primaryRoute = null;
-  if (osrmRoutes && osrmRoutes[0]) {
-    const raw = osrmRoutes[0];
-    primaryRoute = {
+  const activeHazards = [
+    ...db.hazards.filter(h => h.active),
+    ...simulatedHazards.filter(h => h.active)
+  ];
+  const candidates = rawRoutes.map((route, index) => {
+    const hazardCheck = checkRouteHazards(route.geometry.coordinates, activeHazards);
+    const riskLevel = hazardCheck.maxSeverity >= 85 ? "CRITICAL"
+      : hazardCheck.maxSeverity >= 60 ? "HIGH"
+        : hazardCheck.maxSeverity > 0 ? "MODERATE" : "LOW";
+    const feature = {
       type: "Feature",
       properties: {
-        id: "route-primary",
-        name: `Primary Route (${corridor.toUpperCase()})`,
-        distance: Math.round(raw.distance),
-        duration: Math.round(raw.duration),
-        etaMinutes: Math.round(raw.duration / 60),
-        distanceKm: (raw.distance / 1000).toFixed(1),
-        riskScore: 20,
-        riskLevel: "LOW"
+        id: `route-${index + 1}`,
+        name: `${routeProvider === "TOMTOM" ? "TomTom Traffic" : "OSRM"} route ${index + 1}`,
+        distance: Math.round(route.distance),
+        duration: Math.round(route.duration),
+        etaMinutes: Math.round(route.duration / 60),
+        distanceKm: (route.distance / 1000).toFixed(1),
+        trafficDelaySeconds: route.trafficDelaySeconds || 0,
+        routeProvider,
+        trafficAware: routeProvider === "TOMTOM",
+        riskScore: hazardCheck.maxSeverity,
+        riskLevel
       },
-      geometry: raw.geometry
+      geometry: route.geometry
     };
-  } else {
-    // High-resolution fallback geometry
-    primaryRoute = {
-      type: "Feature",
-      properties: {
-        id: "route-primary",
-        name: `Primary Route (${corridor.toUpperCase()})`,
-        distance: 6900,
-        duration: 1250,
-        etaMinutes: 21,
-        distanceKm: "6.9",
-        riskScore: 20,
-        riskLevel: "LOW"
-      },
-      geometry: {
-        type: "LineString",
-        coordinates: [
-          startCoord,
-          [startCoord[0] + 0.003, startCoord[1] - 0.008],
-          [startCoord[0] + 0.010, startCoord[1] - 0.018],
-          [endCoord[0] - 0.008, endCoord[1] + 0.005],
-          endCoord
-        ]
-      }
+    return { route, feature, hazardCheck };
+  });
+
+  const fastest = [...candidates].sort((a, b) => a.route.duration - b.route.duration)[0];
+  const safetyOrder = (a, b) => a.hazardCheck.maxSeverity - b.hazardCheck.maxSeverity
+    || a.hazardCheck.intersectingHazards.length - b.hazardCheck.intersectingHazards.length
+    || a.route.duration - b.route.duration;
+  const safetyRanked = [...candidates].sort(safetyOrder);
+  const safestCandidate = safetyRanked[0];
+  const safest = safestCandidate === fastest
+    ? safetyRanked.find((candidate) => candidate !== fastest
+      && candidate.hazardCheck.maxSeverity === fastest.hazardCheck.maxSeverity
+      && candidate.hazardCheck.intersectingHazards.length === fastest.hazardCheck.intersectingHazards.length) || fastest
+    : safestCandidate;
+  const targetDuration = (fastest.route.duration + safest.route.duration) / 2;
+  const balanced = [...candidates].sort((a, b) =>
+    Math.abs(a.route.duration - targetDuration) - Math.abs(b.route.duration - targetDuration)
+    || safetyOrder(a, b)
+  ).find((candidate) => candidate !== fastest && candidate !== safest)
+    || candidates.find((candidate) => candidate !== fastest && candidate !== safest)
+    || fastest;
+
+  const toOption = (candidate, id, label, color) => {
+    const hazardCount = candidate.hazardCheck.intersectingHazards.length;
+    return {
+      id,
+      label,
+      badge: candidate.feature.properties.trafficAware ? "TomTom live traffic" : "OSRM fallback (no live traffic)",
+      description: hazardCount
+        ? `This route intersects ${hazardCount} active hazard${hazardCount === 1 ? "" : "s"}.`
+        : "No active reported hazards intersect this route.",
+      distanceKm: candidate.feature.properties.distanceKm,
+      etaMinutes: candidate.feature.properties.etaMinutes,
+      trafficDelaySeconds: candidate.feature.properties.trafficDelaySeconds,
+      hazardCount,
+      riskScore: candidate.hazardCheck.maxSeverity,
+      riskLevel: candidate.feature.properties.riskLevel,
+      routeProvider,
+      color,
+      geometry: candidate.route.geometry
     };
-  }
-
-  // 2. Check primary route against active hazards
-  const activeHazards = db.hazards.filter(h => h.active);
-  const hazardCheck = checkRouteHazards(primaryRoute.geometry.coordinates, activeHazards);
-
-  // Calculate 3 distinct alternative options:
-  // 1. FASTEST (Primary direct route)
-  const isCompromised = hazardCheck.isCompromised;
-  const fastestOption = {
-    id: "fastest",
-    label: "FASTEST",
-    badge: isCompromised ? "Hazard Alert" : "Direct Route",
-    description: isCompromised
-      ? "Shortest travel time, but traverses near hazard warning zone."
-      : "Direct primary arterial route with minimum travel time under nominal conditions.",
-    distanceKm: primaryRoute.properties.distanceKm,
-    etaMinutes: primaryRoute.properties.etaMinutes,
-    riskScore: isCompromised ? hazardCheck.maxSeverity : 18,
-    riskLevel: isCompromised ? (hazardCheck.maxSeverity > 80 ? "CRITICAL" : "HIGH") : "LOW",
-    color: isCompromised ? "#ef4444" : "#10b981",
-    geometry: primaryRoute.geometry
   };
 
-  // 2. SAFEST (Bypass via elevated / flood-resilient corridor)
-  const safestWaypoints = [startCoord, bypasses.safest, endCoord];
-  const safestOsrm = await queryOSRMRoute(safestWaypoints, { alternatives: false, steps: false });
-  let safestGeom = primaryRoute.geometry;
-  let safestDist = primaryRoute.properties.distance * 1.25;
-  let safestDur = primaryRoute.properties.duration * 1.15;
-
-  if (safestOsrm && safestOsrm[0]) {
-    safestGeom = safestOsrm[0].geometry;
-    safestDist = safestOsrm[0].distance;
-    safestDur = safestOsrm[0].duration;
-  }
-
-  const safestOption = {
-    id: "safest",
-    label: "SAFEST",
-    badge: isCompromised ? "Recommended Bypass" : "Elevated Corridor",
-    description: isCompromised
-      ? "Completely avoids flooded underpasses and high-congestion corridors."
-      : "Elevated ring bypass designed to avoid low-lying flood-prone bottlenecks.",
-    distanceKm: (safestDist / 1000).toFixed(1),
-    etaMinutes: Math.round(safestDur / 60),
-    riskScore: 12,
-    riskLevel: "LOW",
-    color: "#06b6d4",
-    geometry: safestGeom
-  };
-
-  // 3. BALANCED (Balanced detour option)
-  const balancedWaypoints = [startCoord, bypasses.balanced, endCoord];
-  const balancedOsrm = await queryOSRMRoute(balancedWaypoints, { alternatives: false, steps: false });
-  let balancedGeom = safestGeom;
-  let balancedDist = primaryRoute.properties.distance * 1.12;
-  let balancedDur = primaryRoute.properties.duration * 1.08;
-
-  if (balancedOsrm && balancedOsrm[0]) {
-    balancedGeom = balancedOsrm[0].geometry;
-    balancedDist = balancedOsrm[0].distance;
-    balancedDur = balancedOsrm[0].duration;
-  }
-
-  const balancedOption = {
-    id: "balanced",
-    label: "BALANCED",
-    badge: "Alternate Transit",
-    description: "Balanced corridor minimizing extra distance while maintaining solid road clearance.",
-    distanceKm: (balancedDist / 1000).toFixed(1),
-    etaMinutes: Math.round(balancedDur / 60),
-    riskScore: isCompromised ? 35 : 22,
-    riskLevel: isCompromised ? "MODERATE" : "LOW",
-    color: "#8b5cf6",
-    geometry: balancedGeom
-  };
+  const fastestOption = toOption(fastest, "fastest", "FASTEST", "#10b981");
+  const safestOption = toOption(safest, "safest", "SAFEST", "#06b6d4");
+  const balancedOption = toOption(balanced, "balanced", "BALANCED", "#8b5cf6");
+  const primaryRoute = fastest.feature;
+  const isCompromised = fastest.hazardCheck.intersectingHazards.length > 0;
 
   return {
     status: isCompromised ? "REROUTE_RECOMMENDED" : "OPTIMAL",
     primaryRoute,
+    routeProvider,
+    trafficAware: routeProvider === "TOMTOM",
     hasDisasterRisk: isCompromised,
-    intersectingHazards: hazardCheck.intersectingHazards || [],
+    intersectingHazards: fastest.hazardCheck.intersectingHazards,
     alternatives: {
       fastest: fastestOption,
       safest: safestOption,

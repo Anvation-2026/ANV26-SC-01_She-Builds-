@@ -1,465 +1,131 @@
-import React, { useState } from "react";
-import {
-  CloudRain,
-  Droplets,
-  AlertTriangle,
-  Flame,
-  ShieldAlert,
-  Users,
-  Compass,
-  Car,
-  Wind,
-  CheckCircle2,
-  MapPin,
-  Megaphone,
-  Radio,
-  Eye,
-  Activity,
-  Layers
-} from "lucide-react";
+import React from "react";
+import { AlertTriangle, MapPin, Radio, Users } from "lucide-react";
+
+function formatTime(value) {
+  if (!value) return "Time unavailable";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString();
+}
 
 export default function DisasterIntelligencePanel({
-  rainfall = 12,
-  traffic = 35,
-  riskData = { score: 25, level: "SAFE" },
   hazards = [],
   events = [],
+  feedStatus = {},
   onToggleHazard,
   onToggleEvent,
   onFocusLocation
 }) {
-  const [filterSection, setFilterSection] = useState("ALL"); // "ALL" | "WEATHER" | "TRAFFIC" | "FLOODS" | "EVENTS"
-
-  const activeHazards = hazards.filter((h) => h.active);
-  const activeEvents = events.filter((e) => e.status === "ACTIVE");
-
-  // Environmental calculations
-  const getRainStatus = (rf) => {
-    if (rf >= 75) return { label: "EXTREME DOWNPOUR", color: "text-red-400 bg-red-950/80 border-red-800" };
-    if (rf >= 45) return { label: "HEAVY RAIN", color: "text-orange-400 bg-orange-950/80 border-orange-800" };
-    if (rf >= 20) return { label: "MODERATE RAIN", color: "text-amber-400 bg-amber-950/80 border-amber-800" };
-    return { label: "CLEAR / NOMINAL", color: "text-emerald-400 bg-emerald-950/80 border-emerald-800" };
-  };
-
-  const getTrafficStatus = (tr) => {
-    if (tr >= 75) return { label: "CRITICAL GRIDLOCK", color: "text-red-400 bg-red-950/80 border-red-800" };
-    if (tr >= 50) return { label: "HEAVY CONGESTION", color: "text-orange-400 bg-orange-950/80 border-orange-800" };
-    if (tr >= 30) return { label: "MODERATE TRAFFIC", color: "text-amber-400 bg-amber-950/80 border-amber-800" };
-    return { label: "SMOOTH TRANSIT", color: "text-emerald-400 bg-emerald-950/80 border-emerald-800" };
-  };
-
-  const rainStatus = getRainStatus(rainfall);
-  const trafficStatus = getTrafficStatus(traffic);
-
-  // Dynamic corridor speeds
-  const avgSpeed = Math.max(6, Math.round(45 * (1 - traffic / 110)));
-  const frictionGrip = rainfall > 65 ? "0.31 (Severe Slip Hazard)" : rainfall > 25 ? "0.52 (Reduced Grip)" : "0.85 (Dry Nominal)";
-  const waterRunoff = (rainfall * 0.16).toFixed(1);
-  const visibility = rainfall > 65 ? "< 200 meters" : rainfall > 25 ? "1.2 km" : "> 6 km (Clear)";
+  const activeHazards = hazards.filter((hazard) => hazard.active);
+  const activeEvents = events.filter((event) => event.status === "ACTIVE");
 
   return (
-    <div className="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-800 p-4 shadow-xl space-y-4">
-      {/* Panel Header */}
-      <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-red-600 via-orange-600 to-amber-500 flex items-center justify-center shadow-lg border border-red-500/30">
-            <ShieldAlert className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <h3 className="font-bold text-xs uppercase tracking-wider text-slate-100 flex items-center gap-1.5 font-mono">
-              Urban Disaster Intelligence
-            </h3>
-            <p className="text-[10px] text-slate-400">
-              Live Sensor Telemetry & Hyper-Local Threat Directory
-            </p>
-          </div>
-        </div>
+    <section className="space-y-6 text-slate-200">
+      <header className="border-b border-slate-800 pb-4">
+        <h2 className="text-base font-semibold text-white">Road alerts</h2>
+        <p className="mt-1 text-sm text-slate-400">Traffic feed and rider reports available to this ride.</p>
+      </header>
 
-        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-300 border border-slate-800 flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
-          REAL-TIME
-        </span>
-      </div>
-
-      {/* Filter Chips */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] font-medium scrollbar-thin">
+      <div className="grid grid-cols-1 gap-2">
         {[
-          { id: "ALL", label: "All Intel" },
-          { id: "WEATHER", label: `🌧️ Rain (${rainfall}mm)` },
-          { id: "TRAFFIC", label: `🚗 Traffic (${traffic}%)` },
-          { id: "FLOODS", label: `🌊 Floods (${activeHazards.length})` },
-          { id: "EVENTS", label: `📢 Strikes (${activeEvents.length})` }
-        ].map((btn) => (
-          <button
-            key={btn.id}
-            onClick={() => setFilterSection(btn.id)}
-            className={`px-2.5 py-1 rounded-xl whitespace-nowrap transition font-mono ${
-              filterSection === btn.id
-                ? "bg-cyan-600 text-white font-bold shadow-md shadow-cyan-900/50"
-                : "bg-slate-950/80 text-slate-400 hover:text-slate-200 border border-slate-800/80 hover:border-slate-700"
-            }`}
-          >
-            {btn.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* 1. ENVIRONMENTAL CONDITIONS */}
-      {/* ------------------------------------------------------------------ */}
-      {(filterSection === "ALL" || filterSection === "WEATHER") && (
-        <div className="bg-slate-950/80 rounded-xl border border-slate-800/90 p-3.5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <CloudRain className="w-4 h-4 text-cyan-400" />
-              1. Environmental Conditions & Rainfall
-            </h4>
-            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${rainStatus.color}`}>
-              {rainStatus.label}
-            </span>
-          </div>
-
-          {/* Rainfall Gauge Bar */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-slate-400">Precipitation Intensity</span>
-              <span className="font-bold text-cyan-300">{rainfall} mm/hr</span>
-            </div>
-            <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
-              <div
-                className={`h-full transition-all duration-500 ${
-                  rainfall > 70
-                    ? "bg-gradient-to-r from-amber-500 to-red-500"
-                    : rainfall > 30
-                    ? "bg-gradient-to-r from-blue-500 to-amber-500"
-                    : "bg-gradient-to-r from-cyan-500 to-blue-500"
-                }`}
-                style={{ width: `${Math.min(100, (rainfall / 100) * 100)}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Environmental Telemetry Grid */}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 uppercase block font-mono">Surface Grip Friction</span>
-              <span className="font-bold text-slate-200 block mt-0.5">{frictionGrip}</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 uppercase block font-mono">Runoff Accumulation</span>
-              <span className="font-bold text-cyan-300 block mt-0.5">+{waterRunoff} cm/hr</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 uppercase block font-mono">Visibility Horizon</span>
-              <span className="font-bold text-slate-200 block mt-0.5">{visibility}</span>
-            </div>
-
-            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 uppercase block font-mono">Hydroplaning Hazard</span>
-              <span className={`font-bold block mt-0.5 ${rainfall > 50 ? "text-red-400" : "text-emerald-400"}`}>
-                {rainfall > 50 ? "HIGH RISK (Braking x2)" : "LOW RISK"}
+          ["TomTom traffic", feedStatus.tomtomTraffic],
+          ["Live weather", feedStatus.weather],
+          ["Public events", feedStatus.publicEvents],
+          ["Police incidents", feedStatus.police]
+        ].map(([name, status]) => (
+          <div key={name} className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-slate-300">{name}</span>
+              <span className={`rounded-full px-2 py-1 font-medium ${status?.status === "connected" ? "bg-emerald-950 text-emerald-300" : status?.status === "error" ? "bg-rose-950 text-rose-300" : "bg-slate-800 text-slate-400"}`}>
+                {status?.status === "connected" ? "Connected" : status?.status === "waiting_for_active_ride" ? "Waiting for active ride" : status?.status === "waiting_for_riders" ? "Waiting for GPS" : status?.status === "disabled" ? "Disabled" : status?.status === "waiting_for_location_provider" ? "Location lookup unavailable" : status?.status === "no_public_feed" ? "No feed configured" : status?.status || "Checking"}
               </span>
             </div>
+            {status?.lastError && <p className="mt-1 text-[11px] text-rose-300">{status.lastError}</p>}
+            {status?.setupMessage && <p className="mt-1 text-[11px] text-amber-300">{status.setupMessage}</p>}
+            {status?.message && <p className="mt-1 text-[11px] text-slate-500">{status.message}</p>}
+            {status?.coverage && <p className="mt-1 text-[11px] leading-4 text-slate-500">{status.coverage}</p>}
+            {status?.lastSuccessAt && <p className="mt-1 text-[10px] text-slate-600">Last successful check: {formatTime(status.lastSuccessAt)}</p>}
           </div>
+        ))}
+        <p className="px-1 text-[11px] leading-4 text-slate-500">Public event listings are congestion hints only. They do not verify a road closure or crowd size.</p>
+      </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-400">Active road alerts</span>
+        <span className="rounded-full bg-slate-800 px-2.5 py-1 font-medium text-white">{activeHazards.length}</span>
+      </div>
+
+      {activeHazards.length === 0 ? (
+        <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-400">
+          No active road alerts in the current feed.
         </div>
-      )}
-
-      {/* ------------------------------------------------------------------ */}
-      {/* 2. TRAFFIC CONDITIONS */}
-      {/* ------------------------------------------------------------------ */}
-      {(filterSection === "ALL" || filterSection === "TRAFFIC") && (
-        <div className="bg-slate-950/80 rounded-xl border border-slate-800/90 p-3.5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Car className="w-4 h-4 text-amber-400" />
-              2. Urban Traffic Density & Bottlenecks
-            </h4>
-            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${trafficStatus.color}`}>
-              {trafficStatus.label}
-            </span>
-          </div>
-
-          {/* Traffic Density Bar */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-slate-400">Congestion Saturation</span>
-              <span className="font-bold text-amber-300">{traffic}% Density</span>
-            </div>
-            <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
-              <div
-                className={`h-full transition-all duration-500 ${
-                  traffic > 75
-                    ? "bg-red-500"
-                    : traffic > 50
-                    ? "bg-amber-500"
-                    : "bg-emerald-500"
-                }`}
-                style={{ width: `${traffic}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 uppercase block font-mono">Avg Corridor Speed</span>
-              <span className="font-bold text-amber-300 block mt-0.5 font-mono">{avgSpeed} km/h (Nominal: 45)</span>
-            </div>
-            <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 uppercase block font-mono">Transit Delay Multiplier</span>
-              <span className="font-bold text-red-400 block mt-0.5 font-mono">{(1 + traffic / 50).toFixed(1)}x Travel Time</span>
-            </div>
-          </div>
-
-          {/* Key Bottleneck Corridors */}
-          <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block">
-              Active Arterial Bottlenecks:
-            </span>
-            <div className="space-y-1 text-[11px]">
-              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800">
-                <span className="text-slate-200">Hosur Road Underpass:</span>
-                <span className="text-red-400 font-mono font-bold">GRIDLOCK (0-5 km/h)</span>
-              </div>
-              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800">
-                <span className="text-slate-200">MG Road / Trinity Circle:</span>
-                <span className="text-orange-400 font-mono font-bold">CHOKED (8 km/h)</span>
-              </div>
-              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 border border-slate-800">
-                <span className="text-slate-200">Indiranagar 100 Ft Rd:</span>
-                <span className="text-purple-400 font-mono font-bold">DIVERTED / BLOCKED</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ------------------------------------------------------------------ */}
-      {/* 3. FLOODS & WATERLOGGING DIRECTORY */}
-      {/* ------------------------------------------------------------------ */}
-      {(filterSection === "ALL" || filterSection === "FLOODS") && (
-        <div className="bg-slate-950/80 rounded-xl border border-slate-800/90 p-3.5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Droplets className="w-4 h-4 text-blue-400" />
-              3. Floods & Waterlogged Underpasses ({hazards.length})
-            </h4>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800 font-bold">
-              {activeHazards.length} ACTIVE
-            </span>
-          </div>
-
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-            {hazards.map((h) => {
-              const isActive = h.active;
-              const isCritical = h.severity > 80 || h.blocked;
-
-              return (
-                <div
-                  key={h.id}
-                  className={`p-3 rounded-xl border transition text-xs space-y-2 ${
-                    isActive
-                      ? isCritical
-                        ? "bg-red-950/25 border-red-800/80 shadow-sm"
-                        : "bg-amber-950/25 border-amber-800/80"
-                      : "bg-slate-900/50 border-slate-800/60 opacity-75 hover:opacity-100"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm">🌊</span>
-                        <span className="font-bold text-slate-200">{h.name}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                        Corridor: {h.corridor || "Central Bengaluru"}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      <span
-                        className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
-                          isActive
-                            ? "bg-red-950 text-red-400 border-red-800"
-                            : "bg-slate-800 text-slate-400 border-slate-700"
-                        }`}
-                      >
-                        {isActive ? "ACTIVE HAZARD" : "STANDBY"}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {h.severity}% Severity
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Water Depth & Blocked Badge */}
-                  <div className="flex items-center justify-between bg-slate-950/90 p-2 rounded-lg border border-slate-800/80 text-[11px]">
-                    <div className="flex items-center gap-1.5">
-                      <Droplets className="w-3.5 h-3.5 text-cyan-400" />
-                      <span className="font-mono font-bold text-cyan-300">
-                        Water Depth: {h.waterDepth || "3.5 ft"}
-                      </span>
-                    </div>
-
-                    <span
-                      className={`font-mono font-bold text-[10px] px-1.5 py-0.5 rounded ${
-                        h.blocked
-                          ? "bg-red-950/90 text-red-400 border border-red-800"
-                          : "bg-amber-950/90 text-amber-400 border border-amber-800"
-                      }`}
-                    >
-                      {h.blocked ? "⛔ ROAD BLOCKED" : "⚠️ HAZARDOUS CRAWL"}
-                    </span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 italic">
-                    "{h.description}"
-                  </p>
-
-                  {/* Actions: Focus on Map & Toggle Active */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-800/60">
-                    <button
-                      onClick={() =>
-                        onFocusLocation &&
-                        onFocusLocation({ lat: h.latitude, lng: h.longitude, zoom: 15 })
-                      }
-                      className="flex-1 py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 transition"
-                    >
-                      <MapPin className="w-3 h-3 text-cyan-400" />
-                      Focus on Map
-                    </button>
-
-                    {onToggleHazard && (
-                      <button
-                        onClick={() => onToggleHazard(h.id)}
-                        className={`py-1 px-2.5 rounded-lg text-[11px] font-bold border transition ${
-                          isActive
-                            ? "bg-red-600/20 hover:bg-red-600/30 text-red-300 border-red-500/40"
-                            : "bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40"
-                        }`}
-                      >
-                        {isActive ? "Deactivate" : "Activate"}
-                      </button>
-                    )}
-                  </div>
+      ) : (
+        <div className="space-y-3">
+          {activeHazards.map((hazard) => (
+            <article key={hazard.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-medium text-white">{hazard.name || hazard.type?.replaceAll("_", " ") || "Road alert"}</h3>
+                  <p className="mt-1 text-sm leading-5 text-slate-300">{hazard.description || "No description provided."}</p>
                 </div>
-              );
-            })}
-          </div>
+                {Number.isFinite(hazard.severity) && (
+                  <span className="shrink-0 text-xs text-slate-400">Severity {hazard.severity}</span>
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500">
+                <span className="inline-flex items-center gap-1.5"><Radio size={13} />{hazard.source || "Rider report"}</span>
+                <span>{formatTime(hazard.sourceUpdatedAt || hazard.createdAt || hazard.fetchedAt)}</span>
+              </div>
+              <div className="mt-3 flex gap-2">
+                {Number.isFinite(hazard.latitude) && Number.isFinite(hazard.longitude) && (
+                  <button
+                    type="button"
+                    onClick={() => onFocusLocation?.({ lat: hazard.latitude, lng: hazard.longitude, zoom: 15 })}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                  >
+                    <MapPin size={13} /> Show on map
+                  </button>
+                )}
+                {onToggleHazard && hazard.source !== "TomTom Traffic" && (
+                  <button type="button" onClick={() => onToggleHazard(hazard.id)} className="rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400 hover:bg-slate-800">
+                    Resolve
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* 4. PROTESTS, STRIKES & CIVIL ASSEMBLIES DIRECTORY */}
-      {/* ------------------------------------------------------------------ */}
-      {(filterSection === "ALL" || filterSection === "EVENTS") && (
-        <div className="bg-slate-950/80 rounded-xl border border-slate-800/90 p-3.5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Megaphone className="w-4 h-4 text-purple-400" />
-              4. Protests, Strikes & Public Assemblies ({events.length})
-            </h4>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800 font-bold">
-              {activeEvents.length} ACTIVE
-            </span>
-          </div>
-
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-            {events.map((ev) => {
-              const isActive = ev.status === "ACTIVE";
-              const isStrike = ev.type === "STRIKE";
-              const isFestival = ev.type === "FESTIVAL";
-
-              const badgeColor = isStrike
-                ? "bg-red-950 text-red-400 border-red-800"
-                : isFestival
-                ? "bg-purple-950 text-purple-400 border-purple-800"
-                : "bg-orange-950 text-orange-400 border-orange-800";
-
-              return (
-                <div
-                  key={ev.id}
-                  className={`p-3 rounded-xl border transition text-xs space-y-2 ${
-                    isActive
-                      ? isStrike
-                        ? "bg-red-950/20 border-red-800/80"
-                        : "bg-purple-950/20 border-purple-800/80"
-                      : "bg-slate-900/50 border-slate-800/60 opacity-75 hover:opacity-100"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm">{isStrike ? "📢" : isFestival ? "🎪" : "✊"}</span>
-                        <span className="font-bold text-slate-200">{ev.name}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                        Corridor: {ev.affectedCorridor}
-                      </span>
-                    </div>
-
-                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${badgeColor}`}>
-                      {ev.type}
-                    </span>
-                  </div>
-
-                  {/* Impact details: Attendance, Capacity Reduction & Police Diversions */}
-                  <div className="grid grid-cols-2 gap-1.5 bg-slate-950/90 p-2 rounded-lg border border-slate-800/80 text-[11px] font-mono">
-                    <div className="flex items-center gap-1 text-slate-300">
-                      <Users className="w-3 h-3 text-cyan-400" />
-                      <span>{ev.expectedAttendance ? ev.expectedAttendance.toLocaleString() : 15000} Crowd</span>
-                    </div>
-
-                    <div className="flex items-center gap-1 text-amber-300">
-                      <AlertTriangle className="w-3 h-3 text-amber-400" />
-                      <span>-{(ev.roadCapacityReduction * 100) || 50}% Lane Choke</span>
-                    </div>
-
-                    {ev.policeDiversion && (
-                      <div className="col-span-2 text-emerald-400 text-[10px] font-semibold flex items-center gap-1 pt-0.5 border-t border-slate-800/60">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                        Police Diversions Enforced Around Assembly Perimeter
-                      </div>
-                    )}
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 italic">
-                    "{ev.description}"
-                  </p>
-
-                  {/* Actions: Focus on Map & Toggle Status */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-800/60">
-                    <button
-                      onClick={() =>
-                        onFocusLocation &&
-                        onFocusLocation({ lat: ev.latitude, lng: ev.longitude, zoom: 15 })
-                      }
-                      className="flex-1 py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1 transition"
-                    >
-                      <MapPin className="w-3 h-3 text-purple-400" />
-                      Focus on Map
-                    </button>
-
-                    {onToggleEvent && (
-                      <button
-                        onClick={() => onToggleEvent(ev.id)}
-                        className={`py-1 px-2.5 rounded-lg text-[11px] font-bold border transition ${
-                          isActive
-                            ? "bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border-purple-500/40"
-                            : "bg-slate-800 text-slate-400 border-slate-700"
-                        }`}
-                      >
-                        {isActive ? "Deactivate" : "Activate"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      <div className="border-t border-slate-800 pt-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-white">Public events</h3>
+          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><Users size={13} />{activeEvents.length} active</span>
         </div>
-      )}
-    </div>
+        {activeEvents.length === 0 ? (
+          <p className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-400">
+            {feedStatus.publicEvents?.status === "connected"
+              ? "No Ticket Fairy listings were returned for the covered route locations. This does not mean no public event is happening."
+              : feedStatus.publicEvents?.setupMessage || feedStatus.publicEvents?.lastError || "Event feed is waiting for an active ride."}
+          </p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {activeEvents.map((event) => (
+              <article key={event.id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+                <h4 className="font-medium text-white">{event.name || event.type || "Public event"}</h4>
+                {event.description && <p className="mt-1 text-sm text-slate-300">{event.description}</p>}
+                <div className="mt-2 text-xs text-slate-500">{event.source || "Source unavailable"}{event.startTime ? ` · ${event.timeApproximate ? new Date(event.startTime).toLocaleDateString() : formatTime(event.startTime)}` : ""}</div>
+                {event.sourceUrl && <a href={event.sourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-cyan-300 hover:text-cyan-200">Open event details</a>}
+                {onToggleEvent && <button type="button" onClick={() => onToggleEvent(event.id)} className="mt-3 rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400 hover:bg-slate-800">Resolve</button>}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <p className="flex items-start gap-2 border-t border-slate-800 pt-4 text-xs leading-5 text-slate-500">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        Feed data can be incomplete. Confirm hazards before changing your route.
+      </p>
+    </section>
   );
 }

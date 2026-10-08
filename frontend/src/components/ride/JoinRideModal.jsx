@@ -2,9 +2,8 @@ import React, { useState } from "react";
 import { X, KeyRound, UserCheck } from "lucide-react";
 import { joinRide } from "../../services/api";
 
-export default function JoinRideModal({ isOpen, onClose, onRideJoined }) {
+export default function JoinRideModal({ isOpen, onClose, onRideJoined, user }) {
   const [code, setCode] = useState("");
-  const [name, setName] = useState("Guest Rider");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -21,10 +20,7 @@ export default function JoinRideModal({ isOpen, onClose, onRideJoined }) {
     setError(null);
 
     try {
-      const data = await joinRide(code.trim(), {
-        id: `user-${Date.now().toString(36)}`,
-        name: name.trim() || "Guest Rider"
-      });
+      const data = await joinRide(code.trim());
 
       if (data.success) {
         onRideJoined(data.ride, data.members);
@@ -70,19 +66,7 @@ export default function JoinRideModal({ isOpen, onClose, onRideJoined }) {
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-              Your Rider Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your Name"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
-              required
-            />
-          </div>
+          <p className="text-xs text-slate-400">Joining as <span className="font-semibold text-slate-200">{user?.name}</span></p>
 
           {error && (
             <div className="p-2.5 rounded-lg bg-red-950/70 border border-red-800/80 text-xs text-red-300">

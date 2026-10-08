@@ -1,13 +1,25 @@
 import express from "express";
 import { simulationEngine } from "../simulation/simulationEngine.js";
 import { computeOverallUrbanRisk } from "../disaster/riskEngine.js";
-import { db } from "../database/spatialStore.js";
 
 const router = express.Router();
 
+function getRiderAlerts() {
+  return simulationEngine.riders
+    .filter((rider) => rider.isOffRoute || rider.isStopped || rider.speedFactor < 0.75)
+    .map((rider) => ({
+      riderName: rider.name,
+      message: rider.isOffRoute
+        ? "has moved off the planned route."
+        : rider.isStopped
+          ? "has stopped during the ride."
+          : "is falling behind the group."
+    }));
+}
+
 // GET /api/simulation/state
 router.get("/state", (req, res) => {
-  const activeHazards = db.hazards.filter(h => h.active);
+  const activeHazards = simulationEngine.hazards;
   const risk = computeOverallUrbanRisk({
     rainfall: simulationEngine.rainfall,
     traffic: simulationEngine.traffic,
@@ -23,6 +35,8 @@ router.get("/state", (req, res) => {
     traffic: simulationEngine.traffic,
     eventAttendance: simulationEngine.eventAttendance,
     risk,
+    hazards: simulationEngine.hazards,
+    events: simulationEngine.events,
     riders: simulationEngine.riders
   });
 });
@@ -42,10 +56,11 @@ router.post("/pause", (req, res) => {
 // POST /api/simulation/reset
 router.post("/reset", (req, res) => {
   simulationEngine.reset();
-  const active = db.hazards.filter(h => h.active);
+  const active = simulationEngine.hazards;
   const risk = computeOverallUrbanRisk({
     rainfall: simulationEngine.rainfall,
-    traffic: simulationEngine.traffic
+    traffic: simulationEngine.traffic,
+    eventAttendance: simulationEngine.eventAttendance
   }, active);
 
   res.json({
@@ -56,7 +71,9 @@ router.post("/reset", (req, res) => {
     traffic: simulationEngine.traffic,
     risk,
     score: risk.score,
-    level: risk.level
+    level: risk.level,
+    activeHazards: simulationEngine.hazards,
+    activeEvents: simulationEngine.events
   });
 });
 
@@ -78,7 +95,7 @@ router.post("/scenario/:id", (req, res) => {
   const scenarioId = parseInt(req.params.id, 10);
   simulationEngine.loadScenario(scenarioId);
 
-  const active = db.hazards.filter(h => h.active);
+  const active = simulationEngine.hazards;
   const risk = computeOverallUrbanRisk({
     rainfall: simulationEngine.rainfall,
     traffic: simulationEngine.traffic,
@@ -90,10 +107,13 @@ router.post("/scenario/:id", (req, res) => {
     scenario: scenarioId,
     rainfall: simulationEngine.rainfall,
     traffic: simulationEngine.traffic,
+    eventAttendance: simulationEngine.eventAttendance,
     risk,
     score: risk.score,
     level: risk.level,
-    activeHazards: active
+    activeHazards: active,
+    activeEvents: simulationEngine.events,
+    riderAlerts: getRiderAlerts()
   });
 });
 
@@ -114,14 +134,15 @@ router.post("/rider/:action", (req, res) => {
   res.json({
     success: true,
     action,
-    riders: simulationEngine.riders
+    riders: simulationEngine.riders,
+    riderAlerts: getRiderAlerts()
   });
 });
 
 // --- BACKWARD COMPATIBILITY DEMO ALIASES ---
 router.post("/heavy-rain", (req, res) => {
   simulationEngine.loadScenario(5);
-  const active = db.hazards.filter(h => h.active);
+  const active = simulationEngine.hazards;
   const risk = computeOverallUrbanRisk({
     rainfall: simulationEngine.rainfall,
     traffic: simulationEngine.traffic
@@ -139,7 +160,7 @@ router.post("/heavy-rain", (req, res) => {
 
 router.post("/road-closure", (req, res) => {
   simulationEngine.loadScenario(7);
-  const active = db.hazards.filter(h => h.active);
+  const active = simulationEngine.hazards;
   const risk = computeOverallUrbanRisk({
     rainfall: simulationEngine.rainfall,
     traffic: simulationEngine.traffic,
@@ -157,7 +178,7 @@ router.post("/road-closure", (req, res) => {
 
 router.post("/combined", (req, res) => {
   simulationEngine.loadScenario(8);
-  const active = db.hazards.filter(h => h.active);
+  const active = simulationEngine.hazards;
   const risk = computeOverallUrbanRisk({
     rainfall: simulationEngine.rainfall,
     traffic: simulationEngine.traffic,

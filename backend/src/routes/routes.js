@@ -7,7 +7,7 @@ const router = express.Router();
 // Centralized Routing endpoint: POST /api/routes
 router.post("/routes", async (req, res) => {
   try {
-    const { origin, destination, waypoints = [], emergencyCorridor = false } = req.body;
+    const { origin, destination, waypoints = [], emergencyCorridor = false, simulatedHazards = [] } = req.body;
 
     if (!origin || !destination) {
       return res.status(400).json({ error: "origin and destination are required" });
@@ -17,7 +17,8 @@ router.post("/routes", async (req, res) => {
       origin,
       destination,
       waypoints,
-      emergencyCorridor
+      emergencyCorridor,
+      simulatedHazards
     });
 
     // Update simulation engine route geometry if primary route succeeded

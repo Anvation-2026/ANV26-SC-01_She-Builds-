@@ -1,135 +1,79 @@
-import React, { useState } from "react";
-import { X, Navigation, Users, MapPin, CheckCircle, Compass } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { X, Navigation, MapPin, LocateFixed } from "lucide-react";
 import { createRide } from "../../services/api";
 
-const PRESET_PLACES = [
-  { name: "Cubbon Park Central", lat: 12.9716, lng: 77.5946 },
-  { name: "Koramangala Sony World Signal", lat: 12.9352, lng: 77.6245 },
-  { name: "Indiranagar 100 Feet Road", lat: 12.9784, lng: 77.6412 },
-  { name: "Electronic City Toll Plaza", lat: 12.8452, lng: 77.6680 },
-  { name: "Whitefield ITPL Main Gate", lat: 12.9863, lng: 77.7499 }
-];
-
-export default function CreateRideModal({ isOpen, onClose, onRideCreated }) {
-  const [name, setName] = useState("Sunday Coastal Express");
-  const [startPlace, setStartPlace] = useState(PRESET_PLACES[0]);
-  const [destPlace, setDestPlace] = useState(PRESET_PLACES[1]);
+export default function CreateRideModal({ isOpen, onClose, onRideCreated, onPickDestination, user, startLocation, destination }) {
+  const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
-
+  const [gpsStart, setGpsStart] = useState(null);
+  const [gpsError, setGpsError] = useState("");
+  const [locating, setLocating] = useState(false);
+  const rideStart = gpsStart || startLocation;
+  useEffect(() => {
+    if (isOpen) { setGpsStart(null); setGpsError(""); }
+  }, [isOpen]);
   if (!isOpen) return null;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (!rideStart || !destination) return;
     setLoading(true);
-
     try {
       const data = await createRide({
         name,
-        leaderId: "user-leader",
-        startLocation: { name: startPlace.name, lat: startPlace.lat, lng: startPlace.lng },
-        destination: { name: destPlace.name, lat: destPlace.lat, lng: destPlace.lng }
+        startLocation: { name: gpsStart ? "Rider GPS start" : "Simulation start", lat: rideStart.lat, lng: rideStart.lng },
+        destination: { name: destination.name || "Selected destination", lat: destination.lat, lng: destination.lng }
       });
-
       if (data.success) {
         onRideCreated(data.ride, data.members, data.routeData);
         onClose();
       }
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error("Could not create ride", error);
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) { setGpsError("This browser does not support GPS location."); return; }
+    setLocating(true);
+    setGpsError("");
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => { setGpsStart({ lat: coords.latitude, lng: coords.longitude }); setLocating(false); },
+      (error) => { setGpsError(error.message || "Could not read your GPS location."); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 10_000 }
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl p-5 relative">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
-        >
-          <X className="w-5 h-5" />
-        </button>
-
-        <div className="flex items-center gap-2 mb-4 border-b border-slate-800 pb-3">
-          <Navigation className="w-5 h-5 text-emerald-400" />
-          <h3 className="font-bold text-base text-slate-100">Create New Group Ride</h3>
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4">
+      <div className="relative w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl">
+        <button onClick={onClose} aria-label="Close" className="absolute right-4 top-4 text-slate-400 hover:text-white"><X size={18} /></button>
+        <div className="mb-5 flex items-center gap-2 border-b border-slate-800 pb-3">
+          <Navigation size={18} className="text-emerald-400" />
+          <h2 className="font-semibold">Start a group ride</h2>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-              Ride Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Monsoon Morning Ride"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              required
-            />
+          <label className="block text-sm text-slate-300">Ride name
+            <input value={name} onChange={(event) => setName(event.target.value)} required placeholder={`${user?.name || "Rider"}'s ride`} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-500" />
+          </label>
+          <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-sm">
+            <div className="text-slate-400">Starting from</div>
+            <div className="mt-1 text-slate-200">{rideStart ? `${Number(rideStart.lat).toFixed(5)}, ${Number(rideStart.lng).toFixed(5)} · ${gpsStart ? "GPS" : "Simulation"}` : "Set a start point to create this ride."}</div>
+            <button type="button" onClick={useCurrentLocation} disabled={locating} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"><LocateFixed size={14} />{locating ? "Finding GPS…" : "Use my GPS location"}</button>
+            {gpsError && <p className="mt-2 text-xs text-rose-300">{gpsError}</p>}
           </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Start Location
-            </label>
-            <select
-              value={startPlace.name}
-              onChange={(e) => {
-                const found = PRESET_PLACES.find(p => p.name === e.target.value);
-                if (found) setStartPlace(found);
-              }}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            >
-              {PRESET_PLACES.map(p => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
+          <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+            <div className="flex items-center gap-2 text-sm text-slate-400"><MapPin size={15} /> Destination</div>
+            <p className="my-2 text-sm text-slate-200">{destination ? `${Number(destination.lat).toFixed(5)}, ${Number(destination.lng).toFixed(5)}` : "Choose a point on the map"}</p>
+            <button type="button" onClick={onPickDestination} disabled={!rideStart} className="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">Choose on map</button>
           </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-violet-400"></span> Destination
-            </label>
-            <select
-              value={destPlace.name}
-              onChange={(e) => {
-                const found = PRESET_PLACES.find(p => p.name === e.target.value);
-                if (found) setDestPlace(found);
-              }}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
-            >
-              {PRESET_PLACES.map(p => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800 text-[11px] text-slate-400 space-y-1">
-            <div className="flex items-center gap-1.5 text-emerald-400 font-medium">
-              <Compass className="w-3.5 h-3.5" />
-              <span>OSRM Dynamic Route Engine</span>
-            </div>
-            <p>Creating this ride will generate a unique 6-digit code for all squad members to join.</p>
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/60 transition disabled:opacity-50"
-            >
-              {loading ? "Generating Route..." : "Start Group Ride"}
-            </button>
+          <p className="text-xs text-slate-500">Creating a ride sends its planned route to routing and available traffic, weather and event providers. Live GPS sharing remains optional and separate.</p>
+          <p className="text-xs text-slate-500">The ride gets a code you can share with other riders.</p>
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 rounded-lg bg-slate-800 px-4 py-2 text-sm text-slate-200 hover:bg-slate-700">Cancel</button>
+            <button type="submit" disabled={loading || !rideStart || !destination} className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50">{loading ? "Creating…" : "Start ride"}</button>
           </div>
         </form>
       </div>

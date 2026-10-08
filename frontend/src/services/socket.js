@@ -14,6 +14,7 @@ class SocketService {
   constructor() {
     this.socket = null;
     this.isConnected = false;
+    this.activeRideId = null;
   }
 
   connect() {
@@ -21,6 +22,7 @@ class SocketService {
 
     this.socket = io(SOCKET_SERVER_URL, {
       transports: ["websocket", "polling"],
+      auth: { token: localStorage.getItem("rider-token") },
       reconnectionAttempts: 5,
       reconnectionDelay: 1000
     });
@@ -28,6 +30,7 @@ class SocketService {
     this.socket.on("connect", () => {
       this.isConnected = true;
       console.log("[Socket] Connected to backend coordination server:", this.socket.id);
+      if (this.activeRideId) this.socket.emit("ride:join", { rideId: this.activeRideId });
     });
 
     this.socket.on("disconnect", () => {
@@ -38,24 +41,36 @@ class SocketService {
     return this.socket;
   }
 
-  joinRide(rideId, userId, name) {
+  joinRide(rideId) {
     if (!this.socket) this.connect();
-    this.socket.emit("ride:join", { rideId, userId, name });
+    this.activeRideId = rideId;
+    if (this.socket.connected) this.socket.emit("ride:join", { rideId });
+  }
+
+  disconnect() {
+    this.socket?.disconnect();
+    this.socket = null;
+    this.isConnected = false;
+    this.activeRideId = null;
   }
 
   leaveRide(rideId, userId) {
     if (!this.socket) return;
-    this.socket.emit("ride:leave", { rideId, userId });
+    if (this.activeRideId === rideId) this.activeRideId = null;
+    if (this.socket.connected) this.socket.emit("ride:leave", { rideId, userId });
   }
 
-  sendLocationUpdate(rideId, userId, location) {
+  sendLocationUpdate(rideId, location) {
     if (!this.socket) return;
     this.socket.emit("rider:location:update", {
       rideId,
-      userId,
       location,
       timestamp: Date.now()
     });
+  }
+
+  stopLocationSharing(rideId) {
+    this.socket?.emit("rider:location:stop", { rideId });
   }
 
   requestRegroup(rideId) {

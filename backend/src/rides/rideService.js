@@ -4,6 +4,7 @@
  */
 
 import { db } from "../database/spatialStore.js";
+import { pool } from "../database/postgres.js";
 import { getRelativePosition, calculateDistance } from "../geo/haversine.js";
 import { distanceFromRoute, checkRouteDeviation } from "../geo/polyline.js";
 import { evaluateGroupSeparation } from "../geo/separation.js";
@@ -11,8 +12,10 @@ import { checkProximityAlerts } from "../geo/proximity.js";
 import { calculateRegroupPoint } from "../geo/regroup.js";
 
 export class RideService {
-  createRide({ name, leaderId, startLocation, destination, waypoints = [], plannedRoute = null }) {
+  createRide({ id, code, name, leaderId, startLocation, destination, waypoints = [], plannedRoute = null }) {
     return db.createRide({
+      id,
+      code,
       name,
       leaderId,
       startLocation,
@@ -142,6 +145,12 @@ export class RideService {
         geometry: rerouteOption.geometry
       };
     }
+    // Persist to DB (non-blocking)
+    pool.query(
+      "UPDATE rides SET active_reroute=$1, planned_route=$2 WHERE id=$3",
+      [rerouteOption ?? null, ride.plannedRoute ?? null, rideId]
+    ).catch((err) => console.error("[rideService] Failed to persist reroute:", err.message));
+
     return ride;
   }
 
@@ -150,6 +159,13 @@ export class RideService {
     if (!ride) return null;
 
     ride.emergencyCorridorActive = status !== null ? status : !ride.emergencyCorridorActive;
+
+    // Persist to DB (non-blocking)
+    pool.query(
+      "UPDATE rides SET emergency_corridor_active=$1 WHERE id=$2",
+      [ride.emergencyCorridorActive, rideId]
+    ).catch((err) => console.error("[rideService] Failed to persist emergency corridor:", err.message));
+
     return ride;
   }
 }

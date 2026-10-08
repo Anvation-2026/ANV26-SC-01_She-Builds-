@@ -67,7 +67,7 @@ export default function DisasterRerouteModal({
           <ShieldAlert className="w-5 h-5 text-red-400" />
           <div>
             <h3 className="font-bold text-base text-slate-100">Disaster-Aware Route Selection</h3>
-            <p className="text-[11px] text-slate-400">Hazard detected on primary corridor. Choose group diversion.</p>
+            <p className="text-[11px] text-slate-400">Compare live traffic, estimated time, and reported hazards before choosing the group route.</p>
           </div>
         </div>
 
@@ -123,10 +123,16 @@ export default function DisasterRerouteModal({
                   </div>
                   <div>
                     <span className="text-slate-500 text-[10px] block">HAZARD EXPOSURE</span>
-                    <span className={`font-bold ${data.riskLevel === "LOW" ? "text-emerald-400" : "text-red-400"}`}>
-                      {data.riskLevel === "LOW" ? "0 Hazards (Clear)" : "High Risk Exposure"}
+                    <span className={`font-bold ${data.hazardCount === 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {data.hazardCount === 0 ? "0 hazards" : `${data.hazardCount} hazard${data.hazardCount === 1 ? "" : "s"}`}
                     </span>
                   </div>
+                  {data.trafficDelaySeconds > 0 && (
+                    <div>
+                      <span className="text-slate-500 text-[10px] block">TRAFFIC DELAY</span>
+                      <span className="font-bold text-slate-200">{Math.round(data.trafficDelaySeconds / 60)} mins</span>
+                    </div>
+                  )}
                 </div>
               </div>
             );

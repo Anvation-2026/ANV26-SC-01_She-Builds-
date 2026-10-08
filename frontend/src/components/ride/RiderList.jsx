@@ -1,7 +1,7 @@
 import React from "react";
 import { Users, AlertTriangle, ArrowUpRight, ArrowDownRight, CheckCircle2 } from "lucide-react";
 
-export default function RiderList({ riders = [], currentUserId = "user-leader" }) {
+export default function RiderList({ riders = [], relativeDistances = {}, live = false }) {
   return (
     <div className="bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-800 p-4 shadow-xl space-y-2.5">
       <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
@@ -9,7 +9,7 @@ export default function RiderList({ riders = [], currentUserId = "user-leader" }
           <Users className="w-3.5 h-3.5 text-cyan-400" />
           Rider Roster ({riders.length})
         </h4>
-        <span className="text-[10px] font-mono text-slate-500">Real-Time GPS</span>
+        <span className="text-[10px] font-mono text-slate-500">{live ? "Live GPS" : "Simulation"}</span>
       </div>
 
       <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
@@ -20,8 +20,7 @@ export default function RiderList({ riders = [], currentUserId = "user-leader" }
           const isOffRoute = r.isOffRoute || r.offRouteState?.isOffRoute;
           const isStopped = r.isStopped;
 
-          const relData = item.analysis?.relativeDistances?.[currentUserId] ||
-            item.analysis?.relativeDistances?.["user-leader"];
+          const relData = relativeDistances[r.userId || r.id];
 
           return (
             <div
@@ -57,8 +56,10 @@ export default function RiderList({ riders = [], currentUserId = "user-leader" }
                 {isOffRoute ? (
                   <span className="text-red-400 font-bold flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" />
-                    Off Route ({r.offRouteState?.distance || 420}m)
+                    Off Route ({Number.isFinite(Number(r.offRouteState?.distance)) ? `${r.offRouteState.distance}m` : "distance unavailable"})
                   </span>
+                ) : live && !loc ? (
+                  <span className="text-slate-400">Location not shared</span>
                 ) : isStopped ? (
                   <span className="text-amber-400">Rider Stopped</span>
                 ) : relData ? (
@@ -78,7 +79,7 @@ export default function RiderList({ riders = [], currentUserId = "user-leader" }
                 )}
 
                 <span className="text-[10px] font-mono text-slate-500">
-                  ±{loc?.accuracy || 5}m
+                  {Number.isFinite(Number(loc?.accuracy)) ? `GPS accuracy: ${loc.accuracy} m` : "GPS accuracy unavailable"}
                 </span>
               </div>
             </div>

@@ -4,8 +4,6 @@
  * Supports Scenarios 1 to 8, manual rider perturbations, speed multipliers, and disaster controls
  */
 
-import { db } from "../database/spatialStore.js";
-import { rideService } from "../rides/rideService.js";
 
 // Standard corridor route geometry coordinates between Cubbon Park and Koramangala
 const DEFAULT_ROUTE_GEOMETRY = [
@@ -28,6 +26,8 @@ export class SimulationEngine {
     this.rainfall = 12; // mm/hr
     this.traffic = 35;  // %
     this.eventAttendance = 0;
+    this.hazards = [];
+    this.events = [];
     this.routeCoordinates = [...DEFAULT_ROUTE_GEOMETRY];
     this.rideId = "ride-demo-01";
     this.timerInterval = null;
@@ -138,8 +138,8 @@ export class SimulationEngine {
     const updatedLocations = [];
 
     this.riders.forEach(rider => {
-      if (!rider.isStopped) {
-        rider.progress = (rider.progress + baseIncrement * rider.speedFactor) % 1.0;
+      if (!rider.isStopped && rider.progress < 1) {
+        rider.progress = Math.min(1, rider.progress + baseIncrement * rider.speedFactor);
       }
 
       const [baseLng, baseLat] = this.interpolatePosition(rider.progress);
@@ -157,13 +157,10 @@ export class SimulationEngine {
         lat: parseFloat(finalLat.toFixed(6)),
         lng: parseFloat(finalLng.toFixed(6)),
         accuracy: 5,
-        speed: rider.isStopped ? 0 : Math.round(7.5 * rider.speedFactor * 3.6), // km/h
+        speed: rider.isStopped || rider.progress >= 1 ? 0 : Math.round(7.5 * rider.speedFactor * 3.6), // km/h
         heading: 145,
         timestamp: Date.now()
       };
-
-      // Push to spatial store and compute deviation / relative distances
-      const updateResult = rideService.updateLocation(this.rideId, rider.userId, locationData);
 
       updatedLocations.push({
         rider: {
@@ -172,10 +169,11 @@ export class SimulationEngine {
           role: rider.role,
           avatar: rider.avatar,
           isStopped: rider.isStopped,
-          isOffRoute: rider.isOffRoute
+          isOffRoute: rider.isOffRoute,
+          hasArrived: rider.progress >= 1
         },
         location: locationData,
-        analysis: updateResult
+        analysis: null
       });
     });
 
@@ -188,7 +186,9 @@ export class SimulationEngine {
           rainfall: this.rainfall,
           traffic: this.traffic,
           eventAttendance: this.eventAttendance
-        }
+        },
+        hazards: this.hazards,
+        events: this.events
       });
     }
 
@@ -219,12 +219,13 @@ export class SimulationEngine {
   reset() {
     this.pause();
     this.stepIndex = 0;
+    this.activeScenario = 1;
+    this.speedMultiplier = 1;
     this.rainfall = 12;
     this.traffic = 35;
     this.eventAttendance = 0;
-
-    // Reset hazards to baseline
-    db.hazards.forEach(h => { h.active = false; });
+    this.hazards = [];
+    this.events = [];
 
     // Reset riders
     this.riders.forEach((r, idx) => {
@@ -239,38 +240,63 @@ export class SimulationEngine {
   }
 
   // --- MANUAL RIDER PERTURBATIONS ---
-  moveRahulOffRoute() {
+  moveRahulOffRoute(emitTick = true) {
     const rahul = this.riders.find(r => r.userId === "user-rahul");
     if (rahul) {
       rahul.isOffRoute = true;
       // Offset by approx 450m East-North
       rahul.offRouteOffset = [0.0042, 0.0035];
     }
-    return this.step();
+    return emitTick ? this.step() : this.riders;
   }
 
-  makeAkashFallBehind() {
+  makeAkashFallBehind(emitTick = true) {
     const akash = this.riders.find(r => r.userId === "user-akash");
     if (akash) {
       akash.speedFactor = 0.25; // Crawling
       akash.progress = Math.max(0, akash.progress - 0.08); // Lag behind by ~1.5km
     }
-    return this.step();
+    return emitTick ? this.step() : this.riders;
   }
 
-  stopVivek() {
+  stopVivek(emitTick = true) {
     const vivek = this.riders.find(r => r.userId === "user-vivek");
     if (vivek) {
       vivek.isStopped = !vivek.isStopped;
     }
-    return this.step();
+    return emitTick ? this.step() : this.riders;
+  }
+
+  addScenarioHazard(id, name, type, severity, progress, description, radiusMeters = 400) {
+    const coords = this.routeCoordinates;
+    const routeIndex = Math.round(Math.max(0, Math.min(1, progress)) * (coords.length - 1));
+    const [longitude, latitude] = coords[routeIndex] || this.interpolatePosition(progress);
+    this.hazards.push({
+      id: `SIM-${id}`, source: "Simulation", name, type, severity, confidence: 100,
+      latitude, longitude, radiusMeters, active: true, blocked: type === "ROAD_CLOSURE",
+      roadStatus: type === "ROAD_CLOSURE" ? "BLOCKED" : "HAZARDOUS", description,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  addScenarioEvent(id, name, type, progress, expectedAttendance, description, radiusMeters = 700) {
+    const coords = this.routeCoordinates;
+    const routeIndex = Math.round(Math.max(0, Math.min(1, progress)) * (coords.length - 1));
+    const [longitude, latitude] = coords[routeIndex] || this.interpolatePosition(progress);
+    this.events.push({
+      id: `SIM-${id}`, source: "Simulation", name, type, status: "ACTIVE",
+      latitude, longitude, expectedAttendance, radiusMeters, description,
+      timestamp: new Date().toISOString()
+    });
   }
 
   // --- PREDEFINED SCENARIOS 1 TO 8 ---
   loadScenario(scenarioNumber) {
     this.activeScenario = scenarioNumber;
 
-    // Reset base positions
+    // Reset to the same formation before each scenario.
+    this.hazards = [];
+    this.events = [];
     this.riders.forEach((r, idx) => {
       r.progress = 0.28 - idx * 0.03;
       r.speedFactor = 1.0;
@@ -284,19 +310,18 @@ export class SimulationEngine {
         this.rainfall = 10;
         this.traffic = 30;
         this.eventAttendance = 0;
-        db.hazards.forEach(h => { h.active = false; });
         break;
 
       case 2: // Rider Falls Behind
         this.rainfall = 15;
         this.traffic = 40;
-        this.makeAkashFallBehind();
+        this.makeAkashFallBehind(false);
         break;
 
       case 3: // Rider Goes Off Route
         this.rainfall = 15;
         this.traffic = 40;
-        this.moveRahulOffRoute();
+        this.moveRahulOffRoute(false);
         break;
 
       case 4: // Rider Approaching (starts 2.5km behind)
@@ -312,37 +337,32 @@ export class SimulationEngine {
       case 5: // Heavy Rain
         this.rainfall = 78;
         this.traffic = 75;
-        db.hazards.forEach(h => {
-          if (h.type === "FLOODING" || h.type === "WATERLOGGING") h.active = true;
-        });
+        this.addScenarioHazard("RAIN", "Heavy rain and surface water", "WATERLOGGING", 72, 0.58, "Simulated heavy rain is reducing visibility and making this section hazardous.", 650);
         break;
 
       case 6: // Flooded Road
         this.rainfall = 85;
         this.traffic = 80;
-        db.hazards.forEach(h => {
-          if (h.id === "HZ-001" || h.id === "HZ-003") h.active = true;
-        });
+        this.addScenarioHazard("CLOSURE", "Simulated flooded road", "ROAD_CLOSURE", 95, 0.52, "This road section is closed in the simulation. Check the safer route option.", 550);
         break;
 
       case 7: // Large Public Event
         this.rainfall = 15;
         this.traffic = 91;
         this.eventAttendance = 25000;
-        db.hazards.forEach(h => {
-          if (h.type === "ROAD_CLOSURE" || h.id === "HZ-004" || h.id === "HZ-005") {
-            h.active = true;
-          }
-        });
+        this.addScenarioEvent("GATHERING", "Public gathering", "PUBLIC_GATHERING", 0.68, this.eventAttendance, "Simulated public gathering may slow traffic near this section.");
+        this.addScenarioHazard("CONGESTION", "Event traffic congestion", "TRAFFIC_CONGESTION", 58, 0.68, "Simulated congestion around a public gathering.", 700);
         break;
 
       case 8: // MAIN DEMO SCENARIO: Heavy Rain + Event + Off-route + Fallen behind
         this.rainfall = 88;
         this.traffic = 92;
         this.eventAttendance = 30000;
-        db.hazards.forEach(h => { h.active = true; });
-        this.moveRahulOffRoute();
-        this.makeAkashFallBehind();
+        this.addScenarioHazard("FLOOD", "Flooded road section", "ROAD_CLOSURE", 95, 0.54, "Simulated flooding has closed this road section.", 600);
+        this.addScenarioHazard("RAIN", "Heavy rain", "WEATHER_HAZARD", 78, 0.72, "Simulated heavy rain is affecting visibility.", 500);
+        this.addScenarioEvent("GATHERING", "Public gathering", "PUBLIC_GATHERING", 0.78, this.eventAttendance, "Simulated crowd congestion near the route.");
+        this.moveRahulOffRoute(false);
+        this.makeAkashFallBehind(false);
         break;
 
       default:

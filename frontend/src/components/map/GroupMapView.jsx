@@ -4,6 +4,15 @@ import "leaflet/dist/leaflet.css";
 import { MAP_PROVIDERS } from "../../services/mapProvider";
 import { Layers, Shield, Eye, EyeOff } from "lucide-react";
 
+function escapePopupText(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll(String.fromCharCode(34), "&quot;")
+    .replaceAll(String.fromCharCode(39), "&#39;");
+}
+
 // Fix Leaflet's default icon URLs if ever used by fallback
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -14,18 +23,27 @@ L.Icon.Default.mergeOptions({
 
 export default function GroupMapView({
   userLocation,
+  relativeDistances = {},
   riders = [],
   plannedRoute,
   alternativeRoute,
   emergencyCorridor = false,
   hazards = [],
   events = [],
+  emergencyAlerts = [],
   reports = [],
   regroupPoint = null,
-  focusLocation = null
+  focusLocation = null,
+  destination = null,
+  isPickingDestination = false,
+  onMapClick
 }) {
   const mapContainer = useRef(null);
   const mapInstance = useRef(null);
+  const autoFollow = useRef(true);
+  const onMapClickRef = useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
+  const [tileError, setTileError] = useState(false);
   const tileLayerRef = useRef(null);
   const layersGroup = useRef({
     route: null,
@@ -34,10 +52,12 @@ export default function GroupMapView({
     hazards: null,
     events: null,
     regroup: null,
-    reports: null
+    reports: null,
+    emergency: null,
+    destination: null
   });
 
-  const [activeProvider, setActiveProvider] = useState("carto_dark");
+  const [activeProvider, setActiveProvider] = useState("osm_standard");
   const [visibleLayers, setVisibleLayers] = useState({
     routes: true,
     riders: true,
@@ -64,13 +84,14 @@ export default function GroupMapView({
     }
 
     try {
+      const hasGps = userLocation && Number.isFinite(Number(userLocation.lat)) && Number.isFinite(Number(userLocation.lng));
+      const routeCoordinates = plannedRoute?.geometry?.coordinates;
+      const center = hasGps ? [Number(userLocation.lat), Number(userLocation.lng)] : routeCoordinates?.length ? [routeCoordinates[0][1], routeCoordinates[0][0]] : [20, 0];
       const map = L.map(mapContainer.current, {
-        center: [12.9716, 77.5946], // Bengaluru center
-        zoom: 13,
-        zoomControl: false
+        center,
+        zoom: hasGps || routeCoordinates?.length ? 14 : 2,
+        zoomControl: true
       });
-
-      L.control.zoom({ position: "bottom-right" }).addTo(map);
 
       // Tile layer
       const provider = MAP_PROVIDERS[activeProvider] || MAP_PROVIDERS.carto_dark;
@@ -78,6 +99,10 @@ export default function GroupMapView({
         attribution: provider.attribution,
         maxZoom: 19
       }).addTo(map);
+      tileLayerRef.current.on("tileerror", () => setTileError(true));
+      tileLayerRef.current.on("tileload", () => setTileError(false));
+      map.on("movestart", (event) => { if (event.originalEvent) autoFollow.current = false; });
+      map.on("click", (event) => onMapClickRef.current?.({ lat: event.latlng.lat, lng: event.latlng.lng }));
 
       // Feature groups
       layersGroup.current.route = L.featureGroup().addTo(map);
@@ -85,8 +110,10 @@ export default function GroupMapView({
       layersGroup.current.hazards = L.featureGroup().addTo(map);
       layersGroup.current.events = L.featureGroup().addTo(map);
       layersGroup.current.reports = L.featureGroup().addTo(map);
+      layersGroup.current.emergency = L.featureGroup().addTo(map);
       layersGroup.current.riders = L.featureGroup().addTo(map);
       layersGroup.current.regroup = L.featureGroup().addTo(map);
+      layersGroup.current.destination = L.featureGroup().addTo(map);
 
       mapInstance.current = map;
 
@@ -130,6 +157,12 @@ export default function GroupMapView({
     };
   }, []);
 
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !userLocation || !Number.isFinite(Number(userLocation.lat)) || !Number.isFinite(Number(userLocation.lng))) return;
+    if (autoFollow.current) map.setView([Number(userLocation.lat), Number(userLocation.lng)], Math.max(map.getZoom(), 14));
+  }, [userLocation]);
+
   // Update Tile Layer
   const handleProviderChange = (providerId) => {
     setActiveProvider(providerId);
@@ -142,6 +175,8 @@ export default function GroupMapView({
         attribution: provider.attribution,
         maxZoom: 19
       }).addTo(mapInstance.current);
+      tileLayerRef.current.on("tileerror", () => setTileError(true));
+      tileLayerRef.current.on("tileload", () => setTileError(false));
     } catch (e) {
       console.warn("Tile switch error:", e);
     }
@@ -149,7 +184,7 @@ export default function GroupMapView({
 
   // Handle Dynamic Focus on Location
   useEffect(() => {
-    if (focusLocation && focusLocation.lat && focusLocation.lng && mapInstance.current) {
+    if (focusLocation && Number.isFinite(Number(focusLocation.lat)) && Number.isFinite(Number(focusLocation.lng)) && mapInstance.current) {
       mapInstance.current.flyTo(
         [focusLocation.lat, focusLocation.lng],
         focusLocation.zoom || 15,
@@ -216,6 +251,9 @@ export default function GroupMapView({
           lineCap: "round",
           lineJoin: "round"
         }).addTo(layersGroup.current.route);
+        if (latLngs.length > 1) {
+          map.fitBounds(L.latLngBounds(latLngs).pad(0.12), { maxZoom: 15 });
+        }
 
         // Inner Line
         L.polyline(latLngs, {
@@ -253,7 +291,7 @@ export default function GroupMapView({
       layersGroup.current.riders.clearLayers();
 
       // Render User if GPS available
-      if (userLocation?.lat && userLocation?.lng) {
+      if (userLocation && Number.isFinite(Number(userLocation.lat)) && Number.isFinite(Number(userLocation.lng))) {
         const userHtml = `
           <div class="relative flex items-center justify-center">
             <div class="absolute w-8 h-8 rounded-full bg-emerald-500/40 animate-ping"></div>
@@ -274,7 +312,7 @@ export default function GroupMapView({
           if (!item) return;
           const r = item.rider || item;
           const loc = item.location || r.lastLocation;
-          if (!loc || !loc.lat || !loc.lng) return;
+          if (!loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng))) return;
 
           const isLeader = r.role === "LEADER";
           const isOffRoute = Boolean(r.isOffRoute || r.offRouteState?.isOffRoute);
@@ -284,17 +322,7 @@ export default function GroupMapView({
           const name = r.name || item.name || "Rider";
           const displayName = name.split(" ")[0];
 
-          const bgColor = isOffRoute
-            ? "bg-red-500"
-            : isLeader
-            ? "bg-amber-500"
-            : userId === "user-rahul"
-            ? "bg-blue-500"
-            : userId === "user-akash"
-            ? "bg-purple-500"
-            : userId === "user-vivek"
-            ? "bg-orange-500"
-            : "bg-teal-500";
+          const bgColor = isOffRoute ? "bg-red-500" : isLeader ? "bg-amber-500" : "bg-blue-500";
 
           const badgeInitial = isLeader ? "⭐" : r.avatar || name.charAt(0);
 
@@ -317,8 +345,8 @@ export default function GroupMapView({
             iconAnchor: [14, 21]
           });
 
-          const relDistance = item.analysis?.relativeDistances?.["user-leader"]?.relativeLabel || "";
-          const offRouteInfo = isOffRoute ? `<div class="text-red-400 font-bold">⚠️ OFF ROUTE (${r.offRouteState?.distance || 420}m)</div>` : '';
+          const relDistance = relativeDistances[r.userId || r.id]?.relativeLabel || "";
+          const offRouteInfo = isOffRoute ? `<div class="text-red-400 font-bold">⚠️ OFF ROUTE (${Number.isFinite(Number(r.offRouteState?.distance)) ? r.offRouteState.distance + "m" : "distance unavailable"})</div>` : '';
 
           const popupHtml = `
             <div class="p-1 space-y-1 min-w-[170px] text-xs">
@@ -343,6 +371,24 @@ export default function GroupMapView({
     }
   }, [riders, userLocation]);
 
+  useEffect(() => {
+    const layer = layersGroup.current.emergency;
+    if (!mapInstance.current || !layer) return;
+    layer.clearLayers();
+    emergencyAlerts.filter((alert) => alert.status !== "RESOLVED" && alert.location).forEach((alert) => {
+      const lat = Number(alert.location.lat);
+      const lng = Number(alert.location.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const icon = L.divIcon({
+        html: '<div style="width:38px;height:38px;border-radius:50%;background:#e11d48;border:3px solid white;box-shadow:0 0 0 8px #e11d4840;display:flex;align-items:center;justify-content:center;color:white;font:bold 10px sans-serif">SOS</div>',
+        className: "", iconSize: [38, 38], iconAnchor: [19, 19]
+      });
+      const name = String(alert.riderName || "Rider").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+      const message = String(alert.message || "Emergency assistance requested.").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+      L.marker([lat, lng], { icon }).bindPopup(`<div class="font-bold text-rose-600">SOS · ${name}</div><div class="mt-1 text-xs">${message}</div><div class="mt-1 text-[10px] text-slate-500">${alert.status}</div>`).addTo(layer);
+    });
+  }, [emergencyAlerts]);
+
   // Render Floods & Waterlogging Hazards
   useEffect(() => {
     const map = mapInstance.current;
@@ -359,13 +405,11 @@ export default function GroupMapView({
           const color = isCritical ? "#ef4444" : "#f97316";
 
           // Pulsing Area Circle
-          L.circle([h.latitude, h.longitude], {
-            radius: h.radiusMeters || 500,
-            color: color,
-            fillColor: color,
-            fillOpacity: 0.28,
-            weight: 2
-          }).addTo(layersGroup.current.hazards);
+          if (Number(h.radiusMeters) > 0) {
+            L.circle([h.latitude, h.longitude], {
+              radius: Number(h.radiusMeters), color, fillColor: color, fillOpacity: 0.2, weight: 1
+            }).addTo(layersGroup.current.hazards);
+          }
 
           // Icon Marker
           const iconChar = h.type === "FLOODING" ? "🌊" : h.type === "ROAD_CLOSURE" ? "🚧" : "⚠️";
@@ -379,20 +423,17 @@ export default function GroupMapView({
           const popupHtml = `
             <div class="p-1 space-y-1.5 min-w-[210px] text-xs">
               <div class="font-bold text-slate-100 border-b border-slate-700 pb-1 flex items-center justify-between">
-                <span>${h.name}</span>
+                <span>${escapePopupText(h.name || "Road alert")}</span>
                 <span class="text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${isCritical ? 'bg-red-950 text-red-400 border border-red-800' : 'bg-orange-950 text-orange-400 border border-orange-800'}">
                   ${h.severity}% Risk
                 </span>
               </div>
               <div class="bg-slate-900 p-1.5 rounded border border-slate-800 text-[11px] font-mono">
-                <span class="text-cyan-300 font-bold block">🌊 Water Depth: ${h.waterDepth || "3.5 ft"}</span>
-                <span class="${h.blocked ? 'text-red-400 font-bold' : 'text-amber-400'} block">
-                  Status: ${h.roadStatus || (h.blocked ? 'ROAD BLOCKED' : 'HAZARDOUS')}
-                </span>
+                <span class="text-cyan-300 font-bold block">Type: ${escapePopupText((h.type || "ROAD ALERT").replaceAll("_", " "))}</span>
+                <span class="${h.blocked ? 'text-red-400 font-bold' : 'text-amber-400'} block">Road status: ${escapePopupText(h.roadStatus || "Not reported")}</span>
               </div>
-              <div class="text-[11px] text-slate-300"><strong>Corridor:</strong> ${h.corridor || 'Central'}</div>
-              <div class="text-[11px] text-slate-300"><strong>Confidence:</strong> ${h.confidence}% Verified</div>
-              <div class="text-[10px] text-slate-400 italic pt-0.5">"${h.description}"</div>
+              <div class="text-[11px] text-slate-300"><strong>Source:</strong> ${escapePopupText(h.source || "Rider report")}</div>
+              <div class="text-[10px] text-slate-400 italic pt-0.5">"${escapePopupText(h.description)}"</div>
             </div>
           `;
 
@@ -420,20 +461,19 @@ export default function GroupMapView({
 
           const isStrike = ev.type === "STRIKE";
           const isFestival = ev.type === "FESTIVAL";
-          const color = isStrike ? "#dc2626" : isFestival ? "#9333ea" : "#ea580c";
+          const isPublicListing = ev.source === "Ticket Fairy Public Events";
+          const color = isStrike ? "#dc2626" : isFestival ? "#9333ea" : isPublicListing ? "#0284c7" : "#ea580c";
 
           // Pulsing Area Circle
-          L.circle([ev.latitude, ev.longitude], {
-            radius: 650,
-            color: color,
-            fillColor: color,
-            fillOpacity: 0.22,
-            weight: 2
-          }).addTo(layersGroup.current.events);
+          if (Number(ev.radiusMeters) > 0) {
+            L.circle([ev.latitude, ev.longitude], {
+              radius: Number(ev.radiusMeters), color, fillColor: color, fillOpacity: 0.18, weight: 1
+            }).addTo(layersGroup.current.events);
+          }
 
           // Icon Marker
-          const iconChar = isStrike ? "📢" : isFestival ? "🎪" : "✊";
-          const bgColor = isStrike ? "bg-red-600" : isFestival ? "bg-purple-600" : "bg-orange-500";
+          const iconChar = isPublicListing ? "🎟" : isStrike ? "📢" : isFestival ? "🎪" : "⚠";
+          const bgColor = isStrike ? "bg-red-600" : isFestival ? "bg-purple-600" : isPublicListing ? "bg-sky-600" : "bg-orange-500";
 
           const iconHtml = `
             <div class="relative flex flex-col items-center cursor-pointer group">
@@ -451,18 +491,19 @@ export default function GroupMapView({
           const popupHtml = `
             <div class="p-1 space-y-1.5 min-w-[210px] text-xs">
               <div class="font-bold text-slate-100 border-b border-slate-700 pb-1 flex items-center justify-between">
-                <span>${ev.name}</span>
-                <span class="text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${isStrike ? 'bg-red-950 text-red-400 border border-red-800' : 'bg-purple-950 text-purple-400 border border-purple-800'}">
-                  ${ev.type}
+                <span>${escapePopupText(ev.name || "Public event")}</span>
+                <span class="text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${isPublicListing ? 'bg-sky-950 text-sky-300 border border-sky-800' : isStrike ? 'bg-red-950 text-red-400 border border-red-800' : 'bg-purple-950 text-purple-400 border border-purple-800'}">
+                  ${escapePopupText(ev.type || "PUBLIC EVENT")}
                 </span>
               </div>
-              <div class="bg-slate-900 p-1.5 rounded border border-slate-800 text-[11px] font-mono space-y-0.5">
-                <div class="text-slate-300">👥 Attendees: <strong>${ev.expectedAttendance ? ev.expectedAttendance.toLocaleString() : 15000}</strong></div>
-                <div class="text-amber-400 font-bold">⛔ Capacity Choke: -${(ev.roadCapacityReduction * 100) || 50}%</div>
+              ${isPublicListing ? `<div class="bg-slate-900 p-1.5 rounded border border-slate-800 text-[11px] space-y-0.5"><div>Venue: ${escapePopupText(ev.venue || "Not provided")}</div><div class="text-sky-300">Possible event traffic; attendance and road impact are unknown.</div><div class="text-slate-500">Source: ${escapePopupText(ev.source)}</div></div>` : ""}
+              <div class="bg-slate-900 p-1.5 rounded border border-slate-800 text-[11px] font-mono space-y-0.5" style="${isPublicListing ? "display:none" : ""}">
+                <div class="text-slate-300">👥 Attendees: <strong>${Number.isFinite(Number(ev.expectedAttendance)) ? Number(ev.expectedAttendance).toLocaleString() : "Not provided"}</strong></div>
+                <div class="text-amber-400 font-bold">⛔ Capacity Choke: -${Number.isFinite(Number(ev.roadCapacityReduction)) ? Math.round(Number(ev.roadCapacityReduction) * 100) + "%" : "Not provided"}</div>
                 ${ev.policeDiversion ? '<div class="text-emerald-400 font-bold">👮 Police Diversions Enforced</div>' : ''}
               </div>
-              <div class="text-[11px] text-slate-300"><strong>Corridor:</strong> ${ev.affectedCorridor}</div>
-              <div class="text-[10px] text-slate-400 italic pt-0.5">"${ev.description}"</div>
+              ${!isPublicListing && ev.affectedCorridor ? `<div class="text-[11px] text-slate-300"><strong>Corridor:</strong> ${escapePopupText(ev.affectedCorridor)}</div>` : ""}
+              <div class="text-[10px] text-slate-400 italic pt-0.5">"${escapePopupText(ev.description)}"</div>
             </div>
           `;
 
@@ -587,12 +628,50 @@ export default function GroupMapView({
     }
   }, [reports]);
 
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !layersGroup.current.destination) return;
+    layersGroup.current.destination.clearLayers();
+    if (destination && Number.isFinite(Number(destination.lat)) && Number.isFinite(Number(destination.lng))) {
+      const icon = L.divIcon({
+        html: '<div style="width:22px;height:22px;border-radius:50%;background:#7c3aed;border:3px solid white;box-shadow:0 1px 8px #111"></div>',
+        className: "", iconSize: [22, 22], iconAnchor: [11, 11]
+      });
+      L.marker([destination.lat, destination.lng], { icon }).bindPopup("Ride destination").addTo(layersGroup.current.destination);
+    }
+  }, [destination]);
+
   return (
-    <div className="relative w-full h-full min-h-[400px]">
+    <div className="absolute inset-4 min-h-0 min-w-0 overflow-hidden rounded-xl bg-slate-900">
       <div
         ref={mapContainer}
-        className="w-full h-full min-h-[400px] rounded-2xl overflow-hidden shadow-2xl border border-slate-800"
+        className="absolute inset-0 h-full w-full bg-slate-900"
       />
+
+      {tileError && (
+        <div className="absolute bottom-16 left-4 z-[500] rounded-md bg-slate-900/95 px-3 py-2 text-xs text-amber-200 shadow">
+          Map tiles failed to load. Check network access or try another map provider.
+        </div>
+      )}
+      {isPickingDestination && (
+        <div className="absolute left-1/2 top-4 z-[500] -translate-x-1/2 rounded-md bg-slate-900/95 px-4 py-2 text-sm text-white shadow">
+          Click the map to choose your destination
+        </div>
+      )}
+      {userLocation && (
+        <button
+          type="button"
+          onClick={() => {
+            const map = mapInstance.current;
+            if (!map) return;
+            autoFollow.current = true;
+            map.setView([Number(userLocation.lat), Number(userLocation.lng)], Math.max(map.getZoom(), 14));
+          }}
+          className="absolute bottom-16 right-4 z-[500] rounded-md border border-slate-700 bg-slate-900/95 px-3 py-2 text-xs text-white shadow hover:bg-slate-800"
+        >
+          My location
+        </button>
+      )}
 
       {/* Top Map Controls: Layer Toggles & Provider Switcher */}
       <div className="absolute top-4 right-4 z-[500] flex flex-wrap items-center gap-2">

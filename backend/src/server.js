@@ -1,9 +1,12 @@
+import "./config/loadEnv.js";
 import express from "express";
 import http from "http";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { initializeWebSockets } from "./websocket/socketHandler.js";
+import { initializeDatabase } from "./database/postgres.js";
+import { startTomTomTrafficFeed, getTomTomTrafficStatus, pollTomTomTraffic } from "./feeds/tomtomTraffic.js";
 
 // Auto-load .env if present
 try {
@@ -32,6 +35,10 @@ import hazardsRouter from "./routes/hazards.js";
 import reportsRouter from "./routes/reports.js";
 import eventsRouter from "./routes/events.js";
 import simulationRouter from "./routes/simulation.js";
+import authRouter from "./routes/auth.js";
+import emergencyRouter from "./routes/emergency.js";
+import { startOpenMeteoWeatherFeed, getWeatherFeedStatus, pollOpenMeteoWeather } from "./feeds/openMeteoWeather.js";
+import { startTicketFairyEventsFeed, getTicketFairyFeedStatus, pollTicketFairyEvents } from "./feeds/ticketfairyEvents.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -53,9 +60,29 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
+app.use("/api/auth", authRouter);
 
 // Initialize WebSockets
 const io = initializeWebSockets(server);
+app.set("io", io);
+const lastLocationFeedRefresh = { traffic: 0, weather: 0, events: 0 };
+const refreshLocationFeeds = () => {
+  const now = Date.now();
+  if (now - lastLocationFeedRefresh.traffic >= 60_000) {
+    lastLocationFeedRefresh.traffic = now;
+    void pollTomTomTraffic(io);
+  }
+  if (now - lastLocationFeedRefresh.weather >= 5 * 60_000) {
+    lastLocationFeedRefresh.weather = now;
+    void pollOpenMeteoWeather(io);
+  }
+  if (now - lastLocationFeedRefresh.events >= 15 * 60_000) {
+    lastLocationFeedRefresh.events = now;
+    void pollTicketFairyEvents(io);
+  }
+};
+app.set("refreshLocationFeeds", refreshLocationFeeds);
+io.refreshLocationFeeds = refreshLocationFeeds;
 
 // Root Health & System Diagnosis endpoint
 app.get("/", (req, res) => {
@@ -70,6 +97,7 @@ app.get("/", (req, res) => {
       "/api/risk",
       "/api/events",
       "/api/reports",
+      "/api/emergency",
       "/api/simulation"
     ],
     timestamp: new Date().toISOString()
@@ -85,9 +113,18 @@ app.get("/api/health", (req, res) => {
       "disaster_intelligence",
       "group_rider_coordination",
       "real_time_websockets",
+      "opt_in_live_location_sharing",
+      "persistent_sos_alerts",
+      "location_based_weather_and_event_feeds",
       "osrm_routing",
       "spatial_proximity_and_deviation"
     ],
+    feeds: {
+      tomtomTraffic: getTomTomTrafficStatus(),
+      weather: getWeatherFeedStatus(),
+      publicEvents: getTicketFairyFeedStatus(),
+      police: { enabled: false, status: "no_public_feed", message: "No official police incident feed is configured for this deployment." }
+    },
     timestamp: new Date().toISOString()
   });
 });
@@ -106,6 +143,7 @@ app.use("/api", routesRouter);
 app.use("/api/rides", ridesRouter);
 app.use("/api", hazardsRouter);
 app.use("/api/reports", reportsRouter);
+app.use("/api/emergency", emergencyRouter);
 app.use("/api/events", eventsRouter);
 app.use("/api/simulation", simulationRouter);
 
@@ -128,6 +166,8 @@ server.on("error", (err) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`[ResilientUrban] Server & WebSockets running on http://localhost:${PORT}`);
-});
+await initializeDatabase();
+startTomTomTrafficFeed(io);
+startOpenMeteoWeatherFeed(io);
+startTicketFairyEventsFeed(io);
+server.listen(PORT, () => console.log(`[ResilientUrban] PostgreSQL, API & WebSockets ready on http://localhost:${PORT}`));

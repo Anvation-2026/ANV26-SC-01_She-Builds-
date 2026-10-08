@@ -14,7 +14,7 @@ const HAZARD_TYPES = [
 export default function ReportHazardModal({ isOpen, onClose, userLocation, onReportCreated }) {
   const [type, setType] = useState("FLOODING");
   const [description, setDescription] = useState("");
-  const [photoEvidence, setPhotoEvidence] = useState(true);
+  const [photoEvidence, setPhotoEvidence] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   if (!isOpen) return null;
@@ -25,15 +25,16 @@ export default function ReportHazardModal({ isOpen, onClose, userLocation, onRep
 
     setSubmitting(true);
     try {
-      const lat = userLocation?.lat || 12.9560;
-      const lng = userLocation?.lng || 77.6010;
+      if (!userLocation || !Number.isFinite(userLocation.lat) || !Number.isFinite(userLocation.lng)) return;
+      const lat = userLocation.lat;
+      const lng = userLocation.lng;
 
       const res = await createReport({
         type,
         description: description.trim(),
         latitude: lat,
         longitude: lng,
-        gpsAccuracy: userLocation?.accuracy || 8,
+        gpsAccuracy: userLocation.accuracy ?? 0,
         photoEvidence
       });
 
@@ -104,7 +105,7 @@ export default function ReportHazardModal({ isOpen, onClose, userLocation, onRep
           <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs">
             <span className="text-slate-300 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Verified GPS Attached (±{userLocation?.accuracy || 8}m)
+              {userLocation ? `GPS attached (±${userLocation.accuracy ?? "?"}m)` : "Enable Live GPS to report location"}
             </span>
             <label className="flex items-center gap-1.5 text-cyan-400 cursor-pointer">
               <input
@@ -127,7 +128,7 @@ export default function ReportHazardModal({ isOpen, onClose, userLocation, onRep
             </button>
             <button
               type="submit"
-              disabled={submitting || !description.trim()}
+              disabled={submitting || !description.trim() || !userLocation}
               className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center justify-center gap-2 transition disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" />
