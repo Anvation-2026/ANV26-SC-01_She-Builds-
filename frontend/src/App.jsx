@@ -204,8 +204,8 @@ export default function App() {
     const isRouteHazard = alertObj.type === "route-hazard";
     const isEmergencyAlert = alertObj.type === "emergency";
 
-    // No sound or voice during simulation — it's not a real ride
-    if (!isSimulation && alertVoiceEnabledRef.current && (isRouteDeviation || isPositionUpdate || isRouteHazard || isEmergencyAlert)
+    // Removed !isSimulation constraint so they can demo the app with sound/voice in hackathon
+    if (alertVoiceEnabledRef.current && (isRouteDeviation || isPositionUpdate || isRouteHazard || isEmergencyAlert)
       && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window) {
       const now = Date.now();
       const namesToSpeak = isPositionUpdate
@@ -234,7 +234,7 @@ export default function App() {
       }
     }
 
-    if (!isSimulation && alertSoundEnabledRef.current && audioContextRef.current) {
+    if (alertSoundEnabledRef.current && audioContextRef.current) {
       const context = audioContextRef.current;
       const oscillator = context.createOscillator();
       const gain = context.createGain();
@@ -1150,7 +1150,13 @@ export default function App() {
             soundEnabled={alertSoundEnabled}
             onToggleSound={() => setAlertSoundEnabled((enabled) => !enabled)}
             speechEnabled={alertVoiceEnabled}
-            onToggleSpeech={() => setAlertVoiceEnabled((enabled) => !enabled)}
+            onToggleSpeech={() => {
+              setAlertVoiceEnabled((enabled) => {
+                const next = !enabled;
+                if (!next && window.speechSynthesis) window.speechSynthesis.cancel();
+                return next;
+              });
+            }}
             desktopEnabled={desktopAlertsEnabled}
             onEnableDesktop={enableDesktopAlerts}
             desktopSupported={typeof window !== "undefined" && "Notification" in window}
