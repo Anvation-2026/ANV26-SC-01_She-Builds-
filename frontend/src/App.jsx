@@ -145,6 +145,8 @@ export default function App() {
 
   // Sidebar Tab: "INTEL" | "COORDINATION" | "SIMULATION"
   const [activeSidebarTab, setActiveSidebarTab] = useState("INTEL");
+  const activeSidebarTabRef = useRef("INTEL");
+  activeSidebarTabRef.current = activeSidebarTab;
 
   // Geospatial & Route State
   const [plannedRoute, setPlannedRoute] = useState(null);
@@ -167,6 +169,25 @@ export default function App() {
   const [activeScenario, setActiveScenario] = useState(1);
   const [simulationConditions, setSimulationConditions] = useState(null);
 
+  // Matches DEFAULT_ROUTE_GEOMETRY in simulationEngine.js (Cubbon Park → Koramangala)
+  const DEFAULT_SIM_ROUTE = {
+    geometry: {
+      type: "LineString",
+      coordinates: [
+        [77.5946, 12.9716],
+        [77.5962, 12.9665],
+        [77.5985, 12.9590],
+        [77.6010, 12.9525],
+        [77.6050, 12.9470],
+        [77.6095, 12.9425],
+        [77.6160, 12.9380],
+        [77.6205, 12.9360],
+        [77.6245, 12.9352]
+      ]
+    }
+  };
+  const [simulationRoute, setSimulationRoute] = useState(DEFAULT_SIM_ROUTE);
+
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
@@ -174,6 +195,7 @@ export default function App() {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   const addAlert = useCallback((alertObj) => {
+    const isSimulation = activeSidebarTabRef.current === "SIMULATION";
     const alertMessage = alertObj.message || "";
     const isRouteDeviation = alertObj.type === "deviation"
       || (alertObj.riderName && /route/i.test(alertMessage) && /(off|out|deviat)/i.test(alertMessage));
@@ -181,7 +203,9 @@ export default function App() {
     const isPositionUpdate = alertObj.type === "position" && alertObj.riderName;
     const isRouteHazard = alertObj.type === "route-hazard";
     const isEmergencyAlert = alertObj.type === "emergency";
-    if (alertVoiceEnabledRef.current && (isRouteDeviation || isPositionUpdate || isRouteHazard || isEmergencyAlert)
+
+    // No sound or voice during simulation — it's not a real ride
+    if (!isSimulation && alertVoiceEnabledRef.current && (isRouteDeviation || isPositionUpdate || isRouteHazard || isEmergencyAlert)
       && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window) {
       const now = Date.now();
       const namesToSpeak = isPositionUpdate
@@ -210,7 +234,7 @@ export default function App() {
       }
     }
 
-    if (alertSoundEnabledRef.current && audioContextRef.current) {
+    if (!isSimulation && alertSoundEnabledRef.current && audioContextRef.current) {
       const context = audioContextRef.current;
       const oscillator = context.createOscillator();
       const gain = context.createGain();
@@ -228,7 +252,7 @@ export default function App() {
       oscillator.stop(now + 0.23);
     }
 
-    if (desktopAlertsEnabledRef.current && document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
+    if (!isSimulation && desktopAlertsEnabledRef.current && document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") {
       const notificationMessage = alertObj.message || "There is a new update for your ride.";
       const notificationAlreadyNamesRider = (alertObj.riderName || "").split(" and ")
         .filter(Boolean)
@@ -317,7 +341,12 @@ export default function App() {
         }
 
         const initialSimulation = await simulationStep();
-        if (initialSimulation?.success) setSimulationRiders(initialSimulation.riders || []);
+        if (initialSimulation?.success) {
+          setSimulationRiders(initialSimulation.riders || []);
+          if (initialSimulation.routeCoordinates?.length >= 2) {
+            setSimulationRoute({ geometry: { type: "LineString", coordinates: initialSimulation.routeCoordinates } });
+          }
+        }
 
       } catch (err) {
         console.error("Initialization error:", err);
@@ -576,7 +605,7 @@ export default function App() {
             if (!entry.location || !simulatedRider.userId) return;
             const relative = getRelativeRiderPosition(leader.location, entry.location);
             simulatedDistances[simulatedRider.userId] = relative;
-            announceRiderPosition(simulatedRider.userId, simulatedRider.name, relative);
+            // No position announcements for simulation riders — they are not real users
           });
           setRelativeDistances(simulatedDistances);
         }
@@ -587,6 +616,12 @@ export default function App() {
             simulationFocusSet.current = true;
           }
         }
+      }
+      // Build a GeoJSON-compatible route from simulation routeCoordinates for the map green path
+      if (payload.routeCoordinates && payload.routeCoordinates.length >= 2) {
+        setSimulationRoute({
+          geometry: { type: "LineString", coordinates: payload.routeCoordinates }
+        });
       }
       setSimulationConditions((current) => ({
         ...current,
@@ -691,6 +726,7 @@ export default function App() {
     setIsSimPlaying(false);
     setAlternativeRoute(null);
     setRegroupPoint(null);
+    setSimulationRoute(DEFAULT_SIM_ROUTE);
     const res = await simulationReset();
     if (res.success) {
       setSimulationConditions({
@@ -703,11 +739,6 @@ export default function App() {
       });
       setRouteAlternatives(null);
       simulationFocusSet.current = false;
-      addAlert({
-        type: "success",
-        title: "Simulation Reset",
-        message: "Baseline nominal conditions and squad formation restored."
-      });
     }
   };
 
@@ -739,17 +770,13 @@ export default function App() {
       const scenarioIncidents = [...simulatedHazards, ...simulatedEvents]
         .map((incident) => incident.name)
         .filter(Boolean);
-      const scenarioRiderAlerts = res.riderAlerts || [];
-      if (scenarioIncidents.length || scenarioRiderAlerts.length) {
-        const namedRiders = scenarioRiderAlerts.map((alert) => alert.riderName).filter(Boolean);
-        const riderUpdates = scenarioRiderAlerts.map((alert) => `${alert.riderName} ${alert.message}`);
-        const alertParts = [...riderUpdates, ...scenarioIncidents];
+      // Only alert for actual hazards on an active real ride — not simulation rider state changes
+      if (activeRide && scenarioIncidents.length) {
         const spokenHazardNames = simulatedHazards.map((hazard) => hazard.name).filter(Boolean);
         addAlert({
           type: simulatedHazards.length ? "route-hazard" : "warning",
-          title: `Simulation alert · Scenario ${scenId}`,
-          riderName: namedRiders.join(" and "),
-          message: `${alertParts.join(". ")}. Check the map and route before continuing.`,
+          title: `Scenario ${scenId} · Hazards on route`,
+          message: `${scenarioIncidents.join(", ")}. Check the map and route before continuing.`,
           spokenMessage: `Hazard on your route. ${spokenHazardNames.join(". ")}. Review the route options.`
         });
       }
@@ -1021,7 +1048,7 @@ export default function App() {
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>🚴 Squad ({activeRide ? riders.length : simulationRiders.length})</span>
+              <span>🚴 Squad ({activeRide ? riders.length : 0})</span>
             </button>
 
             <button
@@ -1054,37 +1081,45 @@ export default function App() {
             {/* TAB 2: SQUAD RIDE COORDINATION */}
             {activeSidebarTab === "COORDINATION" && (
               <>
-                {activeRide && (
-                  <ActiveRidePanel
-                    ride={activeRide}
-                    isLeader={activeRide.leaderId === (user.id || user.userId)}
-                    membersCount={riders.length}
-                    isSharingLocation={isSharingLocation}
-                    onToggleLocationSharing={() => setIsSharingLocation((value) => !value)}
-                    onSendSOS={handleSendSOS}
-                    sosSending={sosSending}
-                    separationStatus={separationStatus}
-                    emergencyCorridor={emergencyCorridor}
-                    onRequestRegroup={handleRequestRegroup}
-                    onToggleEmergency={handleToggleEmergency}
-                    onOpenRerouteModal={() => setIsRerouteModalOpen(true)}
-                    onEndRide={handleLeaveRide}
-                  />
+                {activeRide ? (
+                  <>
+                    <ActiveRidePanel
+                      ride={activeRide}
+                      isLeader={activeRide.leaderId === (user.id || user.userId)}
+                      membersCount={riders.length}
+                      isSharingLocation={isSharingLocation}
+                      onToggleLocationSharing={() => setIsSharingLocation((value) => !value)}
+                      onSendSOS={handleSendSOS}
+                      sosSending={sosSending}
+                      separationStatus={separationStatus}
+                      emergencyCorridor={emergencyCorridor}
+                      onRequestRegroup={handleRequestRegroup}
+                      onToggleEmergency={handleToggleEmergency}
+                      onOpenRerouteModal={() => setIsRerouteModalOpen(true)}
+                      onEndRide={handleLeaveRide}
+                    />
+
+                    <EmergencyAlertsPanel
+                      alerts={emergencyAlerts}
+                      currentUserId={user.id || user.userId}
+                      onAcknowledge={handleAcknowledgeSOS}
+                      onResolve={handleResolveSOS}
+                      onFocusLocation={setFocusLocation}
+                    />
+
+                    <RiderList
+                      riders={riders}
+                      relativeDistances={relativeDistances}
+                      live={true}
+                    />
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                    <Users className="w-10 h-10 text-slate-700" />
+                    <p className="text-sm font-semibold text-slate-400">No active ride</p>
+                    <p className="text-xs text-slate-500 max-w-[220px]">Start or join a group ride to see your squad here.</p>
+                  </div>
                 )}
-
-                <EmergencyAlertsPanel
-                  alerts={emergencyAlerts}
-                  currentUserId={user.id || user.userId}
-                  onAcknowledge={handleAcknowledgeSOS}
-                  onResolve={handleResolveSOS}
-                  onFocusLocation={setFocusLocation}
-                />
-
-                <RiderList
-                  riders={activeRide ? riders : simulationRiders}
-                  relativeDistances={relativeDistances}
-                  live={Boolean(activeRide)}
-                />
               </>
             )}
 
@@ -1119,25 +1154,30 @@ export default function App() {
             desktopEnabled={desktopAlertsEnabled}
             onEnableDesktop={enableDesktopAlerts}
             desktopSupported={typeof window !== "undefined" && "Notification" in window}
+            isSimulationMode={activeSidebarTab === "SIMULATION"}
           />
 
           <GroupMapView
-            userLocation={liveRideActive ? userLocation : null}
+            userLocation={activeSidebarTab === "SIMULATION" ? null : (liveRideActive ? userLocation : null)}
             relativeDistances={relativeDistances}
-            riders={activeRide
-              ? riders.filter((rider) => (rider.userId || rider.id || rider.rider?.userId) !== (user.id || user.userId))
-              : simulationRiders}
-            plannedRoute={plannedRoute}
-            alternativeRoute={alternativeRoute}
-            emergencyCorridor={emergencyCorridor}
-            hazards={activeRide ? hazards : simulationConditions?.hazards || []}
-            events={activeRide ? events : simulationConditions?.events || []}
-            emergencyAlerts={emergencyAlerts}
-            reports={reports}
-            regroupPoint={regroupPoint}
+            riders={
+              activeSidebarTab === "SIMULATION"
+                ? simulationRiders
+                : activeRide
+                  ? riders.filter((rider) => (rider.userId || rider.id || rider.rider?.userId) !== (user.id || user.userId))
+                  : []
+            }
+            plannedRoute={activeSidebarTab === "SIMULATION" ? simulationRoute : plannedRoute}
+            alternativeRoute={activeSidebarTab === "SIMULATION" ? null : alternativeRoute}
+            emergencyCorridor={activeSidebarTab === "SIMULATION" ? false : emergencyCorridor}
+            hazards={activeSidebarTab === "SIMULATION" ? (simulationConditions?.hazards || []) : (activeRide ? hazards : [])}
+            events={activeSidebarTab === "SIMULATION" ? (simulationConditions?.events || []) : (activeRide ? events : [])}
+            emergencyAlerts={activeSidebarTab === "SIMULATION" ? [] : emergencyAlerts}
+            reports={activeSidebarTab === "SIMULATION" ? [] : reports}
+            regroupPoint={activeSidebarTab === "SIMULATION" ? null : regroupPoint}
             focusLocation={focusLocation}
-            destination={rideDestination}
-            isPickingDestination={isPickingDestination}
+            destination={activeSidebarTab === "SIMULATION" ? null : rideDestination}
+            isPickingDestination={activeSidebarTab === "SIMULATION" ? false : isPickingDestination}
             onMapClick={(point) => {
               if (!isPickingDestination) return;
               setRideDestination({ ...point, name: "Selected destination" });
@@ -1157,6 +1197,7 @@ export default function App() {
         startLocation={simulationRiders[0]?.location || null}
         destination={rideDestination}
         onPickDestination={() => { setIsPickingDestination(true); setIsCreateModalOpen(false); }}
+        onDestinationChange={(dest) => { setRideDestination(dest); setFocusLocation({ ...dest, zoom: 14 }); }}
         onRideCreated={(ride, members, routeData) => {
           setIsSharingLocation(false);
           setActiveRide(ride);

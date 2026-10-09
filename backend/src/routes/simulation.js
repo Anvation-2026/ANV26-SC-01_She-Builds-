@@ -80,7 +80,7 @@ router.post("/reset", (req, res) => {
 // POST /api/simulation/step
 router.post("/step", (req, res) => {
   const updatedRiders = simulationEngine.step();
-  res.json({ success: true, riders: updatedRiders });
+  res.json({ success: true, riders: updatedRiders, routeCoordinates: simulationEngine.routeCoordinates });
 });
 
 // POST /api/simulation/speed

@@ -11,7 +11,8 @@ export default function NotificationBanner({
   onToggleSpeech,
   desktopEnabled = false,
   onEnableDesktop,
-  desktopSupported = true
+  desktopSupported = true,
+  isSimulationMode = false
 }) {
 
   return (
@@ -21,9 +22,10 @@ export default function NotificationBanner({
           <button
             type="button"
             onClick={onToggleSpeech}
+            disabled={isSimulationMode}
             aria-label={speechEnabled ? "Turn off spoken alerts" : "Turn on spoken alerts"}
-            title={speechEnabled ? "Turn off spoken alerts" : "Turn on spoken alerts"}
-            className="flex items-center gap-1.5 rounded-lg border-l border-slate-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-800"
+            title={isSimulationMode ? "Disabled in simulation mode" : speechEnabled ? "Turn off spoken alerts" : "Turn on spoken alerts"}
+            className="flex items-center gap-1.5 rounded-lg border-l border-slate-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {speechEnabled ? <Volume2 className="h-3.5 w-3.5 text-amber-300" /> : <VolumeX className="h-3.5 w-3.5 text-slate-400" />}
             Voice {speechEnabled ? "on" : "off"}
@@ -31,9 +33,10 @@ export default function NotificationBanner({
           <button
             type="button"
             onClick={onToggleSound}
+            disabled={isSimulationMode}
             aria-label={soundEnabled ? "Mute alert sounds" : "Enable alert sounds"}
-            title={soundEnabled ? "Mute alert sounds" : "Enable alert sounds"}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-800"
+            title={isSimulationMode ? "Disabled in simulation mode" : soundEnabled ? "Mute alert sounds" : "Enable alert sounds"}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {soundEnabled ? <Volume2 className="h-3.5 w-3.5 text-cyan-300" /> : <VolumeX className="h-3.5 w-3.5 text-slate-400" />}
             Sound {soundEnabled ? "on" : "off"}
@@ -41,9 +44,9 @@ export default function NotificationBanner({
           <button
             type="button"
             onClick={onEnableDesktop}
-            disabled={!desktopSupported || desktopEnabled}
-            title={!desktopSupported ? "This browser does not support desktop notifications" : desktopEnabled ? "Desktop alerts enabled" : "Allow notifications from this browser"}
-            className="flex items-center gap-1.5 rounded-lg border-l border-slate-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-800 disabled:cursor-default disabled:text-emerald-300"
+            disabled={!desktopSupported || desktopEnabled || isSimulationMode}
+            title={isSimulationMode ? "Disabled in simulation mode" : !desktopSupported ? "This browser does not support desktop notifications" : desktopEnabled ? "Desktop alerts enabled" : "Allow notifications from this browser"}
+            className="flex items-center gap-1.5 rounded-lg border-l border-slate-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:text-emerald-300"
           >
             {desktopEnabled ? <BellRing className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
             {desktopEnabled ? "Desktop on" : desktopSupported ? "Enable desktop alerts" : "Desktop unavailable"}

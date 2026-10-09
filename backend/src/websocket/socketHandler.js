@@ -193,6 +193,9 @@ export function initializeWebSockets(httpServer) {
     });
   });
 
-  simulationEngine.setOnTick((payload) => io.emit("simulation:tick", payload));
+  simulationEngine.setOnTick((payload) => io.emit("simulation:tick", {
+    ...payload,
+    routeCoordinates: simulationEngine.routeCoordinates
+  }));
   return io;
 }
